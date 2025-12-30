@@ -1,0 +1,453 @@
+# ============================================================
+# 文件: backend/app/services/section_splitter.py
+# 功能: 沃尔玛对账单板块切割器
+# 作者: 开发团队
+# 创建时间: 2025-12-13
+# 说明: 通过关键词定位，将PDF图片切割成多个板块
+# ============================================================
+
+import logging  # 日志记录
+from typing import Dict, List, Tuple, Any, Optional  # 类型提示
+from pathlib import Path  # 路径处理
+import re  # 正则表达式
+
+# 创建logger实例
+logger = logging.getLogger(__name__)
+
+
+# ========== 板块定义配置 ==========
+
+# 定义各板块的识别关键词
+# 格式: {板块ID: [关键词列表]}
+SECTION_KEYWORDS = {
+    'payment_info': ['付款详情', '向您支付的金额', '付款日期'],
+    'sales': ['销售', '产品价格'],
+    'refund': ['退款'],
+    'adjustment': ['调整'],
+    'wfs': ['沃尔玛商品服务', '沃尔玛配送服务', 'WFS'],
+    'other_activities': ['其他活动'],
+}
+
+# 板块优先级（用于排序）
+SECTION_PRIORITY = {
+    'payment_info': 0,
+    'sales': 1,
+    'refund': 2,
+    'adjustment': 3,
+    'wfs': 4,
+    'other_activities': 5,
+}
+
+
+# ========== 板块切割器类 ==========
+
+class SectionSplitter:
+    """沃尔玛对账单板块切割器.
+
+    通过OCR识别关键词，定位各个板块的位置，然后切割图片。
+
+    Attributes:
+        ocr_engine: OCR引擎实例
+        image: 原始图片对象
+        image_width: 图片宽度
+        image_height: 图片高度
+        ocr_results: OCR识别结果
+        sections: 检测到的板块信息
+    """
+
+    def __init__(self, ocr_engine):
+        """初始化板块切割器.
+
+        Args:
+            ocr_engine: OCREngine实例
+        """
+        # 保存OCR引擎
+        self.ocr_engine = ocr_engine
+
+        # 图片信息
+        self.image = None
+        self.image_width = 0
+        self.image_height = 0
+
+        # OCR结果
+        self.ocr_results = []
+
+        # 板块信息
+        self.sections = {}
+
+        logger.info("板块切割器初始化完成")
+
+
+    def analyze_image(self, image) -> Dict[str, Any]:
+        """分析图片，定位所有板块.
+
+        Args:
+            image: PIL Image对象或numpy数组
+
+        Returns:
+            dict: 板块信息字典，格式:
+                {
+                    'section_id': {
+                        'name': '板块名称',
+                        'keywords': ['找到的关键词'],
+                        'bbox': (x, y, width, height),
+                        'y_start': Y起始坐标,
+                        'y_end': Y结束坐标
+                    }
+                }
+        """
+        logger.info("=" * 60)
+        logger.info("开始分析图片板块")
+        logger.info("=" * 60)
+
+        # 保存图片
+        self.image = image
+
+        # 获取图片尺寸
+        if hasattr(image, 'size'):
+            # PIL Image
+            self.image_width, self.image_height = image.size
+        else:
+            # numpy数组
+            import numpy as np
+            if isinstance(image, np.ndarray):
+                self.image_height, self.image_width = image.shape[:2]
+
+        logger.info(f"图片尺寸: {self.image_width}x{self.image_height}")
+
+        # 1. OCR识别整页
+        logger.info("步骤1: OCR识别整页内容...")
+        self.ocr_results = self.ocr_engine.recognize_image(image)
+        logger.info(f"  检测到 {len(self.ocr_results)} 个文本块")
+
+        # 2. 查找板块关键词
+        logger.info("步骤2: 查找板块关键词...")
+        keyword_positions = self._find_section_keywords()
+        logger.info(f"  找到 {len(keyword_positions)} 个板块标识")
+
+        # 3. 计算板块边界
+        logger.info("步骤3: 计算板块边界...")
+        self.sections = self._calculate_section_bounds(keyword_positions)
+        logger.info(f"  确定 {len(self.sections)} 个板块")
+
+        # 4. 输出板块信息
+        logger.info("步骤4: 板块信息汇总:")
+        for section_id, info in sorted(self.sections.items(),
+                                       key=lambda x: SECTION_PRIORITY.get(x[0], 99)):
+            logger.info(f"  [{section_id}] {info['name']}")
+            logger.info(f"    关键词: {', '.join(info['keywords'])}")
+            logger.info(f"    Y范围: {info['y_start']} - {info['y_end']} (高度: {info['y_end']-info['y_start']})")
+
+        logger.info("=" * 60)
+
+        return self.sections
+
+
+    def _find_section_keywords(self) -> Dict[str, List[Dict]]:
+        """查找板块关键词在OCR结果中的位置.
+
+        Returns:
+            dict: 关键词位置信息
+                {
+                    'section_id': [
+                        {
+                            'keyword': '关键词',
+                            'text': '识别的文本',
+                            'box': 文本框坐标,
+                            'y_center': Y中心坐标
+                        }
+                    ]
+                }
+        """
+        keyword_positions = {}
+
+        # 遍历所有OCR结果
+        for box, (text, score) in self.ocr_results:
+            # 清理文本（去除空格）
+            clean_text = text.replace(' ', '').replace('\n', '')
+
+            # 检查每个板块的关键词
+            for section_id, keywords in SECTION_KEYWORDS.items():
+                for keyword in keywords:
+                    # 检查是否包含关键词
+                    if keyword in clean_text or clean_text in keyword:
+                        # 计算文本框的Y中心坐标
+                        y_coords = [point[1] for point in box]
+                        y_center = sum(y_coords) / len(y_coords)
+
+                        # 保存关键词位置
+                        if section_id not in keyword_positions:
+                            keyword_positions[section_id] = []
+
+                        keyword_positions[section_id].append({
+                            'keyword': keyword,
+                            'text': clean_text,
+                            'box': box,
+                            'y_center': y_center,
+                            'score': score
+                        })
+
+                        logger.debug(f"  找到关键词: '{keyword}' -> '{clean_text}' (Y={y_center:.0f}, 置信度={score:.2%})")
+
+        return keyword_positions
+
+
+    def _calculate_section_bounds(
+        self,
+        keyword_positions: Dict[str, List[Dict]]
+    ) -> Dict[str, Dict]:
+        """根据关键词位置计算各板块的边界.
+
+        Args:
+            keyword_positions: 关键词位置信息
+
+        Returns:
+            dict: 板块边界信息
+        """
+        sections = {}
+
+        # 遍历找到的板块
+        for section_id, positions in keyword_positions.items():
+            if not positions:
+                continue
+
+            # 找到该板块的第一个关键词位置（作为板块起始）
+            # 按Y坐标排序，取最上面的
+            positions.sort(key=lambda x: x['y_center'])
+            first_pos = positions[0]
+
+            # 板块名称
+            section_names = {
+                'payment_info': '付款信息',
+                'sales': '销售板块',
+                'refund': '退款板块',
+                'adjustment': '调整板块',
+                'wfs': 'WFS服务费',
+                'other_activities': '其他活动'
+            }
+
+            # 记录板块信息
+            sections[section_id] = {
+                'name': section_names.get(section_id, section_id),
+                'keywords': [p['text'] for p in positions],
+                'y_start': int(first_pos['y_center']),
+                'y_end': 0,  # 稍后计算
+                'bbox': None  # 稍后计算
+            }
+
+        # 计算每个板块的结束位置
+        # 按Y坐标排序所有板块
+        sorted_sections = sorted(
+            sections.items(),
+            key=lambda x: x[1]['y_start']
+        )
+
+        # 计算每个板块的y_end（下一个板块的y_start，或图片底部）
+        for i, (section_id, info) in enumerate(sorted_sections):
+            if i < len(sorted_sections) - 1:
+                # 不是最后一个板块，y_end = 下一个板块的y_start
+                next_section = sorted_sections[i + 1][1]
+                info['y_end'] = next_section['y_start']
+            else:
+                # 最后一个板块，y_end = 图片底部
+                info['y_end'] = self.image_height
+
+            # 添加边距（往上扩展一点，避免标题被切掉）
+            margin_top = 50  # 上边距（像素）
+            margin_bottom = 20  # 下边距
+
+            info['y_start'] = max(0, info['y_start'] - margin_top)
+            info['y_end'] = min(self.image_height, info['y_end'] + margin_bottom)
+
+            # 计算完整的边界框 (x, y, width, height)
+            info['bbox'] = (
+                0,  # X起始（整个宽度）
+                info['y_start'],  # Y起始
+                self.image_width,  # 宽度
+                info['y_end'] - info['y_start']  # 高度
+            )
+
+        return sections
+
+
+    def split_sections(
+        self,
+        output_dir: str,
+        save_images: bool = True
+    ) -> Dict[str, Any]:
+        """切割板块并保存图片.
+
+        Args:
+            output_dir: 输出目录
+            save_images: 是否保存图片到磁盘
+
+        Returns:
+            dict: 切割结果，格式:
+                {
+                    'section_id': {
+                        'image': PIL Image对象,
+                        'path': 保存路径（如果save_images=True）,
+                        'bbox': 边界框,
+                        'name': 板块名称
+                    }
+                }
+        """
+        logger.info("=" * 60)
+        logger.info("开始切割板块")
+        logger.info("=" * 60)
+
+        # 检查是否已分析
+        if not self.sections:
+            raise ValueError("请先调用analyze_image()分析图片")
+
+        # 创建输出目录
+        from pathlib import Path
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        # 切割结果
+        split_results = {}
+
+        # 导入图像处理工具
+        from app.utils.image_utils import crop_image_region, save_image
+
+        # 遍历所有板块
+        for section_id, info in sorted(self.sections.items(),
+                                       key=lambda x: SECTION_PRIORITY.get(x[0], 99)):
+            logger.info(f"切割板块: [{section_id}] {info['name']}")
+
+            try:
+                # 切割图片
+                bbox = info['bbox']
+                cropped_image = crop_image_region(self.image, bbox)
+
+                # 保存结果
+                result = {
+                    'image': cropped_image,
+                    'bbox': bbox,
+                    'name': info['name'],
+                    'path': None
+                }
+
+                # 如果需要保存到磁盘
+                if save_images:
+                    # 生成文件名
+                    filename = f"section_{section_id}.png"
+                    file_path = output_path / filename
+
+                    # 保存图片
+                    save_image(cropped_image, str(file_path))
+                    result['path'] = str(file_path)
+
+                    logger.info(f"  已保存: {filename}")
+                else:
+                    logger.info(f"  已切割（未保存）")
+
+                split_results[section_id] = result
+
+            except Exception as e:
+                logger.error(f"  切割失败: {e}")
+                continue
+
+        logger.info("=" * 60)
+        logger.info(f"完成! 共切割 {len(split_results)} 个板块")
+        logger.info("=" * 60)
+
+        return split_results
+
+
+    def analyze_and_split(
+        self,
+        image,
+        output_dir: str,
+        save_images: bool = True
+    ) -> Dict[str, Any]:
+        """一站式分析和切割.
+
+        Args:
+            image: 图片对象
+            output_dir: 输出目录
+            save_images: 是否保存图片
+
+        Returns:
+            dict: 切割结果
+        """
+        # 1. 分析图片
+        self.analyze_image(image)
+
+        # 2. 切割板块
+        return self.split_sections(output_dir, save_images)
+
+
+# ========== 便捷函数 ==========
+
+def split_statement_sections(
+    ocr_engine,
+    image,
+    output_dir: str = 'test_output/sections',
+    save_images: bool = True
+) -> Dict[str, Any]:
+    """便捷函数：切割对账单板块.
+
+    Args:
+        ocr_engine: OCREngine实例
+        image: 图片对象
+        output_dir: 输出目录
+        save_images: 是否保存图片
+
+    Returns:
+        dict: 切割结果
+
+    Example:
+        >>> from app.services.ocr_engine import OCREngine
+        >>> from app.utils.image_utils import pdf_to_images
+        >>>
+        >>> ocr = OCREngine()
+        >>> images = pdf_to_images('statement.pdf')
+        >>> results = split_statement_sections(ocr, images[0])
+    """
+    splitter = SectionSplitter(ocr_engine)
+    return splitter.analyze_and_split(image, output_dir, save_images)
+
+
+if __name__ == "__main__":
+    # 测试代码
+    import sys
+    from pathlib import Path
+
+    # 添加backend到路径
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+    from app.services.ocr_engine import OCREngine
+    from app.utils.image_utils import pdf_to_images
+
+    # 配置日志
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    if len(sys.argv) > 1:
+        pdf_path = sys.argv[1]
+
+        # 转换PDF
+        print("转换PDF...")
+        images = pdf_to_images(pdf_path, dpi=600, save_images=False)
+
+        # 初始化OCR
+        print("初始化OCR...")
+        ocr = OCREngine()
+
+        # 切割板块
+        print("切割板块...")
+        results = split_statement_sections(ocr, images[0])
+
+        # 显示结果
+        print("\n切割结果:")
+        for section_id, info in results.items():
+            print(f"  [{section_id}] {info['name']}")
+            print(f"    路径: {info['path']}")
+            print(f"    尺寸: {info['bbox'][2]}x{info['bbox'][3]}")
+
+    else:
+        print("用法: python section_splitter.py <PDF文件路径>")

@@ -1,0 +1,804 @@
+# ============================================================
+# 文件: backend/app/services/pdf_section_splitter.py
+# 功能: PDF板块切割器 - 实现左右64%切割和板块定位
+# 作者: 开发团队
+# 创建时间: 2025-12-13
+# 最后修改: 2025-12-13
+# 说明:
+#   1. 识别PDF的3大区域（头部、核心数据区、尾部）
+#   2. 核心数据区进行左右64%切割
+#   3. 左栏关键词定位各板块Y坐标
+#   4. 右栏按板块切割并提取数据
+# ============================================================
+
+import logging  # 日志记录
+import re  # 正则表达式
+from typing import Dict, List, Tuple, Optional, Any  # 类型提示
+from pathlib import Path  # 路径处理
+from datetime import datetime  # 日期处理
+import json  # JSON处理
+
+# 创建logger实例
+logger = logging.getLogger(__name__)
+
+
+class SectionSplitter:
+    """PDF板块切割器类.
+
+    负责将沃尔玛对账单PDF按照布局结构切割成不同区域和板块，
+    为后续的OCR识别和数据提取做准备。
+
+    处理流程：
+    1. 识别3大区域边界（头部、核心数据区、尾部）
+    2. 核心数据区左右64%切割
+    3. 左栏关键词定位板块
+    4. 右栏按板块切割
+
+    Attributes:
+        ocr_engine: OCR引擎实例
+        output_dir: 输出目录（保存切割结果）
+        save_images: 是否保存中间图片
+    """
+
+    # 区域边界关键词
+    REGION_KEYWORDS = {
+        'header_end': '回款等待',           # 头部区域结束标志
+        'footer_start': '向您支付的金额'     # 尾部区域开始标志
+    }
+
+    # 板块定位关键词（核心数据区域）
+    SECTION_KEYWORDS = {
+        'sales': '销售',
+        'refund': '退款',
+        'adjustment': '调整',
+        'wfs': ['沃尔玛商品服务', 'WFS'],  # 支持多个关键词
+        'other': '其他活动'
+    }
+
+    # 左右切割比例
+    LEFT_COLUMN_RATIO = 0.64  # 左栏占64%
+
+
+    def __init__(
+        self,
+        ocr_engine,
+        output_dir: Optional[str] = None,
+        save_images: bool = True
+    ):
+        """初始化板块切割器.
+
+        Args:
+            ocr_engine: OCR引擎实例（OCREngine对象）
+            output_dir: 输出目录，如果不指定则不保存图片
+            save_images: 是否保存中间切割图片
+        """
+        self.ocr_engine = ocr_engine
+        self.output_dir = Path(output_dir) if output_dir else None
+        self.save_images = save_images
+
+        # 创建输出目录
+        if self.save_images and self.output_dir:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"输出目录: {self.output_dir}")
+
+        logger.info("PDF板块切割器初始化完成")
+
+
+    def process_pdf_image(
+        self,
+        image,
+        pdf_name: str = "unnamed"
+    ) -> Dict[str, Any]:
+        """处理PDF图片的完整流程.
+
+        这是主入口函数，执行完整的切割和数据提取流程。
+
+        Args:
+            image: PIL Image对象或numpy数组
+            pdf_name: PDF文件名（用于输出目录命名）
+
+        Returns:
+            dict: 完整的处理结果，包含：
+                - regions: 区域边界信息
+                - header_data: 头部数据
+                - section_boundaries: 板块边界
+                - section_images: 切割后的板块图片
+                - footer_data: 尾部数据
+        """
+        logger.info("=" * 60)
+        logger.info(f"开始处理PDF: {pdf_name}")
+        logger.info("=" * 60)
+
+        # 创建PDF专属输出目录
+        if self.save_images and self.output_dir:
+            pdf_output_dir = self.output_dir / pdf_name
+            pdf_output_dir.mkdir(parents=True, exist_ok=True)
+
+            # 保存原始图片
+            from app.utils.image_utils import save_image
+            save_image(image, str(pdf_output_dir / "01_original_page.png"))
+        else:
+            pdf_output_dir = None
+
+
+        # ========== 步骤1: 识别3大区域边界 ==========
+        logger.info("\n[步骤1] 识别区域边界...")
+        regions = self._identify_regions(image)
+
+        logger.info(f"  头部结束（{self.REGION_KEYWORDS['header_end']}）: y={regions['header_end_y']}")
+        logger.info(f"  尾部开始（{self.REGION_KEYWORDS['footer_start']}）: y={regions['footer_start_y']}")
+        logger.info(f"  数据区域: y={regions['data_start_y']} 到 y={regions['data_end_y']}")
+        logger.info(f"  数据区域高度: {regions['data_height']}px")
+
+
+        # ========== 步骤2: 处理头部区域 ==========
+        logger.info("\n[步骤2] 处理头部区域...")
+        header_region = self._extract_region(
+            image,
+            0,
+            regions['header_end_y'],
+            "header"
+        )
+
+        if pdf_output_dir:
+            from app.utils.image_utils import save_image
+            save_image(header_region, str(pdf_output_dir / "02_header_region.png"))
+
+        # 提取头部信息（暂时返回空，后续实现）
+        header_data = self._extract_header_info(header_region)
+        logger.info(f"  头部信息提取完成")
+
+
+        # ========== 步骤3: 处理核心数据区域 ==========
+        logger.info("\n[步骤3] 处理核心数据区域...")
+
+        # 切割数据区域
+        data_region = self._extract_region(
+            image,
+            regions['data_start_y'],
+            regions['data_end_y'],
+            "data"
+        )
+
+        if pdf_output_dir:
+            from app.utils.image_utils import save_image
+            save_image(data_region, str(pdf_output_dir / "03_data_region.png"))
+
+
+        # [3.1] 左右切割
+        logger.info("\n[步骤3.1] 左右切割...")
+        left_column, right_column = self._split_left_right(data_region)
+
+        if pdf_output_dir:
+            from app.utils.image_utils import save_image
+            save_image(left_column, str(pdf_output_dir / "04_left_column.png"))
+            save_image(right_column, str(pdf_output_dir / "05_right_column.png"))
+
+        logger.info(f"  左栏: {self._get_image_size(left_column)} (64%)")
+        logger.info(f"  右栏: {self._get_image_size(right_column)} (36%)")
+
+
+        # [3.2] 左栏: 查找板块关键词
+        logger.info("\n[步骤3.2] 板块关键词定位...")
+        keyword_positions = self._find_section_keywords(left_column)
+
+        found_count = sum(1 for pos in keyword_positions.values() if pos is not None)
+        logger.info(f"  找到 {found_count}/{len(self.SECTION_KEYWORDS)} 个关键词")
+
+        for section, pos in keyword_positions.items():
+            if pos:
+                logger.info(f"  [OK] {section}: y={pos['y_start']}, 置信度={pos['confidence']:.2f}")
+            else:
+                logger.warning(f"  [--] {section}: 未找到")
+
+
+        # [3.3] 计算板块边界
+        logger.info("\n[步骤3.3] 计算板块边界...")
+        section_boundaries = self._calculate_section_boundaries(
+            keyword_positions,
+            self._get_image_height(data_region)
+        )
+
+        for section, boundary in section_boundaries.items():
+            if boundary:
+                logger.info(
+                    f"  {section}: y={boundary['y_start']}-{boundary['y_end']} "
+                    f"(高度{boundary['height']}px)"
+                )
+
+
+        # [3.4] 右栏: 按板块切割
+        logger.info("\n[步骤3.4] 切割板块...")
+        section_images = self._extract_sections(
+            right_column,
+            section_boundaries,
+            pdf_output_dir
+        )
+
+        logger.info(f"  成功切割 {len(section_images)} 个板块")
+
+
+        # ========== 步骤4: 处理尾部区域 ==========
+        logger.info("\n[步骤4] 处理尾部区域...")
+        footer_region = self._extract_region(
+            image,
+            regions['footer_start_y'],
+            self._get_image_height(image),
+            "footer"
+        )
+
+        if pdf_output_dir:
+            from app.utils.image_utils import save_image
+            save_image(footer_region, str(pdf_output_dir / "11_footer_region.png"))
+
+        # 提取尾部信息（暂时返回空，后续实现）
+        footer_data = self._extract_footer_info(footer_region)
+        logger.info(f"  尾部信息提取完成")
+
+
+        # ========== 步骤5: 组装结果 ==========
+        logger.info("\n[步骤5] 组装完整数据...")
+
+        result = {
+            'pdf_name': pdf_name,
+            'regions': regions,
+            'header_data': header_data,
+            'section_boundaries': section_boundaries,
+            'section_images': section_images,
+            'footer_data': footer_data,
+            'output_dir': str(pdf_output_dir) if pdf_output_dir else None
+        }
+
+        logger.info("=" * 60)
+        logger.info(f"PDF处理完成: {pdf_name}")
+        logger.info("=" * 60)
+
+        return result
+
+
+    def _identify_regions(self, image) -> Dict[str, int]:
+        """识别PDF的3大区域边界.
+
+        通过查找关键词"回款等待"和"向您支付的金额"来确定：
+        - 头部区域：从顶部到"回款等待"
+        - 核心数据区域：从"回款等待"之后到"向您支付的金额"之前
+        - 尾部区域：从"向您支付的金额"到底部
+
+        Args:
+            image: PDF图片
+
+        Returns:
+            dict: 区域边界信息
+                - header_end_y: 头部结束的Y坐标
+                - data_start_y: 数据区域开始的Y坐标
+                - data_end_y: 数据区域结束的Y坐标
+                - footer_start_y: 尾部开始的Y坐标
+                - data_height: 数据区域高度
+        """
+        # OCR识别整个图片
+        ocr_results = self.ocr_engine.recognize_image(image)
+
+        image_height = self._get_image_height(image)
+
+        # 查找"回款等待"（头部结束标志）
+        header_end_y = None
+        for box, (text, confidence) in ocr_results:
+            if self.REGION_KEYWORDS['header_end'] in text:
+                # 使用文本框的底部Y坐标作为头部结束位置
+                header_end_y = int(max([pt[1] for pt in box]))
+                logger.debug(f"  找到'{self.REGION_KEYWORDS['header_end']}': y={header_end_y}, 置信度={confidence:.2f}")
+                break
+
+        # 如果未找到，使用估算值（假设头部占15%）
+        if header_end_y is None:
+            header_end_y = int(image_height * 0.15)
+            logger.warning(f"  未找到'{self.REGION_KEYWORDS['header_end']}'，使用估算值: y={header_end_y}")
+
+
+        # 查找"向您支付的金额"（尾部开始标志）
+        footer_start_y = None
+        for box, (text, confidence) in ocr_results:
+            if self.REGION_KEYWORDS['footer_start'] in text:
+                # 使用文本框的顶部Y坐标作为尾部开始位置
+                footer_start_y = int(min([pt[1] for pt in box]))
+                logger.debug(f"  找到'{self.REGION_KEYWORDS['footer_start']}': y={footer_start_y}, 置信度={confidence:.2f}")
+                break
+
+        # 如果未找到，使用估算值（假设尾部从85%开始）
+        if footer_start_y is None:
+            footer_start_y = int(image_height * 0.85)
+            logger.warning(f"  未找到'{self.REGION_KEYWORDS['footer_start']}'，使用估算值: y={footer_start_y}")
+
+
+        # 计算数据区域
+        data_start_y = header_end_y
+        data_end_y = footer_start_y
+        data_height = data_end_y - data_start_y
+
+        return {
+            'header_end_y': header_end_y,
+            'data_start_y': data_start_y,
+            'data_end_y': data_end_y,
+            'footer_start_y': footer_start_y,
+            'data_height': data_height,
+            'image_height': image_height
+        }
+
+
+    def _extract_region(
+        self,
+        image,
+        y_start: int,
+        y_end: int,
+        region_name: str
+    ):
+        """提取指定Y坐标范围的区域.
+
+        Args:
+            image: 原始图片
+            y_start: 起始Y坐标
+            y_end: 结束Y坐标
+            region_name: 区域名称（用于日志）
+
+        Returns:
+            裁剪后的图片
+        """
+        from app.utils.image_utils import crop_image_region
+
+        width = self._get_image_width(image)
+        height = y_end - y_start
+
+        # 确保坐标合法
+        if height <= 0:
+            logger.warning(f"  区域'{region_name}'高度为{height}，可能存在问题")
+            height = 1  # 避免错误
+
+        region = crop_image_region(
+            image,
+            (0, y_start, width, height)
+        )
+
+        logger.debug(f"  提取区域'{region_name}': y={y_start}-{y_end}, 高度={height}px")
+
+        return region
+
+
+    def _split_left_right(self, image) -> Tuple:
+        """左右切割图片（64%分界线）.
+
+        Args:
+            image: 要切割的图片
+
+        Returns:
+            tuple: (左栏图片, 右栏图片)
+        """
+        from app.utils.image_utils import crop_image_region
+
+        width = self._get_image_width(image)
+        height = self._get_image_height(image)
+
+        # 计算切割位置（64%）
+        split_x = int(width * self.LEFT_COLUMN_RATIO)
+
+        # 切割左栏（0 到 64%）
+        left_column = crop_image_region(
+            image,
+            (0, 0, split_x, height)
+        )
+
+        # 切割右栏（64% 到 100%）
+        right_column = crop_image_region(
+            image,
+            (split_x, 0, width - split_x, height)
+        )
+
+        logger.debug(f"  切割位置: x={split_x} ({self.LEFT_COLUMN_RATIO*100}%)")
+
+        return left_column, right_column
+
+
+    def _find_section_keywords(self, left_column) -> Dict[str, Optional[Dict]]:
+        """在左栏中查找所有板块关键词.
+
+        Args:
+            left_column: 左栏图片
+
+        Returns:
+            dict: 关键词位置信息
+                格式: {
+                    'sales': {'y_start': 100, 'text': '销售', 'confidence': 0.95},
+                    'refund': {'y_start': 300, 'text': '退款', 'confidence': 0.92},
+                    ...
+                }
+                未找到的关键词值为None
+        """
+        # OCR识别左栏
+        ocr_results = self.ocr_engine.recognize_image(left_column)
+
+        # 初始化结果字典
+        keyword_positions = {}
+
+        # 遍历每个板块的关键词
+        for section_key, keywords in self.SECTION_KEYWORDS.items():
+            # 支持单个关键词或多个关键词
+            if isinstance(keywords, str):
+                keywords = [keywords]
+
+            # 查找关键词
+            found = False
+            for box, (text, confidence) in ocr_results:
+                # 检查文本中是否包含任何一个关键词
+                for keyword in keywords:
+                    if keyword in text:
+                        # 提取Y坐标（文本框顶部）
+                        y_coords = [pt[1] for pt in box]
+                        y_start = int(min(y_coords))
+
+                        keyword_positions[section_key] = {
+                            'y_start': y_start,
+                            'keyword': keyword,
+                            'text': text,
+                            'confidence': confidence
+                        }
+
+                        found = True
+                        break
+
+                if found:
+                    break
+
+            # 如果未找到，设为None
+            if not found:
+                keyword_positions[section_key] = None
+
+        return keyword_positions
+
+
+    def _calculate_section_boundaries(
+        self,
+        keyword_positions: Dict[str, Optional[Dict]],
+        total_height: int
+    ) -> Dict[str, Optional[Dict]]:
+        """根据关键词位置计算各板块的边界.
+
+        每个板块的范围：从当前关键词位置到下一个关键词位置（或图片底部）。
+
+        Args:
+            keyword_positions: 关键词位置信息
+            total_height: 数据区域总高度
+
+        Returns:
+            dict: 板块边界信息
+                格式: {
+                    'sales': {'y_start': 100, 'y_end': 300, 'height': 200},
+                    'refund': {'y_start': 300, 'y_end': 500, 'height': 200},
+                    ...
+                }
+                未找到的板块值为None
+        """
+        # 过滤出已找到的板块，并按Y坐标排序
+        found_sections = []
+        for section_key, pos_info in keyword_positions.items():
+            if pos_info is not None:
+                found_sections.append((section_key, pos_info['y_start']))
+
+        # 按Y坐标排序
+        found_sections.sort(key=lambda x: x[1])
+
+        # 计算每个板块的边界
+        section_boundaries = {}
+
+        for i, (section_key, y_start) in enumerate(found_sections):
+            # 结束位置：下一个板块的起始位置（或图片底部）
+            if i < len(found_sections) - 1:
+                y_end = found_sections[i + 1][1]
+            else:
+                y_end = total_height
+
+            # 计算高度
+            height = y_end - y_start
+
+            section_boundaries[section_key] = {
+                'y_start': y_start,
+                'y_end': y_end,
+                'height': height
+            }
+
+        # 未找到的板块设为None
+        for section_key in self.SECTION_KEYWORDS.keys():
+            if section_key not in section_boundaries:
+                section_boundaries[section_key] = None
+
+        return section_boundaries
+
+
+    def _extract_sections(
+        self,
+        right_column,
+        section_boundaries: Dict[str, Optional[Dict]],
+        pdf_output_dir: Optional[Path]
+    ) -> Dict[str, Any]:
+        """在右栏中按板块边界切割.
+
+        Args:
+            right_column: 右栏图片
+            section_boundaries: 板块边界信息
+            pdf_output_dir: PDF输出目录
+
+        Returns:
+            dict: 板块图片字典
+                格式: {'sales': PIL.Image, 'refund': PIL.Image, ...}
+        """
+        from app.utils.image_utils import crop_image_region, save_image
+
+        section_images = {}
+
+        # 板块名称到序号的映射（用于文件命名）
+        section_order = {
+            'sales': '06',
+            'refund': '07',
+            'adjustment': '08',
+            'wfs': '09',
+            'other': '10'
+        }
+
+        # 遍历所有板块
+        for section_key, boundary in section_boundaries.items():
+            if boundary is None:
+                logger.debug(f"  跳过未找到的板块: {section_key}")
+                continue
+
+            # 切割右栏对应区域
+            section_image = crop_image_region(
+                right_column,
+                (0, boundary['y_start'], self._get_image_width(right_column), boundary['height'])
+            )
+
+            section_images[section_key] = section_image
+
+            # 保存图片
+            if self.save_images and pdf_output_dir:
+                file_num = section_order.get(section_key, '99')
+                filename = f"{file_num}_{section_key}_section.png"
+                save_image(section_image, str(pdf_output_dir / filename))
+                logger.debug(f"  保存板块图片: {filename}")
+
+        return section_images
+
+
+    def _extract_header_info(self, header_image) -> Dict[str, Any]:
+        """提取头部区域信息.
+
+        包括：
+        - 对账周期（period_start, period_end）
+        - 付款状态（payment_status）
+        - 其他相关信息
+
+        Args:
+            header_image: 头部区域图片
+
+        Returns:
+            dict: 头部信息
+        """
+        # OCR识别头部区域
+        ocr_results = self.ocr_engine.recognize_image(header_image)
+        text_lines = [text for _, (text, _) in ocr_results]
+        full_text = '\n'.join(text_lines)
+
+        header_data = {}
+
+        # 解析对账周期
+        # 格式: YYYY年MM月DD日 - YYYY年MM月DD日
+        period_pattern = r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*-\s*(\d{4})年(\d{1,2})月(\d{1,2})日'
+        period_match = re.search(period_pattern, full_text)
+
+        if period_match:
+            # 提取起始日期
+            start_year, start_month, start_day = period_match.group(1, 2, 3)
+            period_start = f"{start_year}-{start_month.zfill(2)}-{start_day.zfill(2)}"
+
+            # 提取结束日期
+            end_year, end_month, end_day = period_match.group(4, 5, 6)
+            period_end = f"{end_year}-{end_month.zfill(2)}-{end_day.zfill(2)}"
+
+            header_data['period_start'] = period_start
+            header_data['period_end'] = period_end
+
+            logger.debug(f"  对账周期: {period_start} 至 {period_end}")
+        else:
+            logger.warning("  未能解析对账周期")
+            header_data['period_start'] = None
+            header_data['period_end'] = None
+
+        # 解析付款状态
+        payment_status = None
+        if '已支付' in full_text:
+            payment_status = '已支付'
+        elif '等待中' in full_text or '待处理' in full_text:
+            payment_status = '等待中'
+
+        header_data['payment_status'] = payment_status
+
+        if payment_status:
+            logger.debug(f"  付款状态: {payment_status}")
+
+        # 保存完整文本（用于后续深度解析）
+        header_data['full_text'] = full_text
+
+        return header_data
+
+
+    def _extract_footer_info(self, footer_image) -> Dict[str, Any]:
+        """提取尾部区域信息.
+
+        包括：
+        - 向您支付的金额（final_amount）
+
+        Args:
+            footer_image: 尾部区域图片
+
+        Returns:
+            dict: 尾部信息
+        """
+        # OCR识别尾部区域
+        ocr_results = self.ocr_engine.recognize_image(footer_image)
+        text_lines = [text for _, (text, _) in ocr_results]
+        full_text = '\n'.join(text_lines)
+
+        footer_data = {}
+
+        # 查找最终支付金额
+        # 格式: 向您支付的金额 ... XXX.XX 美元
+        amount_pattern = r'向您支付的金额[^\d]*([-]?\d+[,.]?\d*\.?\d+)\s*美元'
+        amount_match = re.search(amount_pattern, full_text)
+
+        if amount_match:
+            # 提取金额
+            amount_str = amount_match.group(1).replace(',', '')
+            final_amount = float(amount_str)
+
+            footer_data['final_amount'] = final_amount
+            logger.debug(f"  向您支付的金额: {final_amount} 美元")
+        else:
+            logger.warning("  未能解析最终支付金额")
+            footer_data['final_amount'] = None
+
+        # 保存完整文本
+        footer_data['full_text'] = full_text
+
+        return footer_data
+
+
+    # ========== 工具函数 ==========
+
+    def _get_image_width(self, image) -> int:
+        """获取图片宽度."""
+        from PIL import Image
+        import numpy as np
+
+        if isinstance(image, Image.Image):
+            return image.width
+        elif isinstance(image, np.ndarray):
+            return image.shape[1]
+        else:
+            raise TypeError(f"不支持的图像类型: {type(image)}")
+
+
+    def _get_image_height(self, image) -> int:
+        """获取图片高度."""
+        from PIL import Image
+        import numpy as np
+
+        if isinstance(image, Image.Image):
+            return image.height
+        elif isinstance(image, np.ndarray):
+            return image.shape[0]
+        else:
+            raise TypeError(f"不支持的图像类型: {type(image)}")
+
+
+    def _get_image_size(self, image) -> str:
+        """获取图片尺寸字符串."""
+        width = self._get_image_width(image)
+        height = self._get_image_height(image)
+        return f"{width}x{height}"
+
+
+# ========== 工厂函数 ==========
+
+def create_section_splitter(
+    ocr_engine,
+    output_dir: Optional[str] = None,
+    save_images: bool = True
+) -> SectionSplitter:
+    """创建板块切割器实例（工厂函数）.
+
+    Args:
+        ocr_engine: OCR引擎实例
+        output_dir: 输出目录
+        save_images: 是否保存中间图片
+
+    Returns:
+        SectionSplitter: 板块切割器实例
+
+    Example:
+        >>> from app.services.ocr_engine import create_ocr_engine
+        >>> ocr_engine = create_ocr_engine()
+        >>> splitter = create_section_splitter(ocr_engine, output_dir='test_output')
+    """
+    return SectionSplitter(
+        ocr_engine=ocr_engine,
+        output_dir=output_dir,
+        save_images=save_images
+    )
+
+
+# ========== 测试代码 ==========
+
+if __name__ == '__main__':
+    """测试板块切割器功能."""
+    import sys
+    from pathlib import Path
+
+    # 添加backend目录到Python路径
+    backend_dir = Path(__file__).parent.parent.parent
+    sys.path.insert(0, str(backend_dir))
+
+    from app.services.ocr_engine import create_ocr_engine
+    from app.utils.image_utils import pdf_to_images
+
+    # 配置日志
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    print("=" * 60)
+    print("PDF板块切割器测试")
+    print("=" * 60)
+
+    if len(sys.argv) > 1:
+        pdf_path = sys.argv[1]
+
+        if not Path(pdf_path).exists():
+            print(f"\n错误: PDF文件不存在: {pdf_path}")
+            sys.exit(1)
+
+        print(f"\n测试PDF: {Path(pdf_path).name}")
+
+        # 1. 创建OCR引擎
+        print("\n[1] 创建OCR引擎...")
+        ocr_engine = create_ocr_engine()
+
+        # 2. 创建板块切割器
+        print("\n[2] 创建板块切割器...")
+        splitter = create_section_splitter(
+            ocr_engine,
+            output_dir='test_output/section_split',
+            save_images=True
+        )
+
+        # 3. PDF转图片
+        print("\n[3] PDF转图片...")
+        images = pdf_to_images(pdf_path, dpi=600, save_images=False)
+        print(f"  转换了 {len(images)} 页")
+
+        # 4. 处理第一页
+        print("\n[4] 处理第一页...")
+        pdf_name = Path(pdf_path).stem
+        result = splitter.process_pdf_image(images[0], pdf_name)
+
+        # 5. 显示结果
+        print("\n[5] 处理结果:")
+        print(f"  输出目录: {result['output_dir']}")
+        print(f"  头部数据: {result['header_data']}")
+        print(f"  板块数量: {len([b for b in result['section_boundaries'].values() if b])}")
+        print(f"  尾部数据: {result['footer_data']}")
+
+    else:
+        print("\n用法: python pdf_section_splitter.py <PDF文件路径>")
+        print("示例: python pdf_section_splitter.py PdfData/MP_12032024_statement_summary.pdf")
+
+    print("\n" + "=" * 60)
+    print("测试完成")
+    print("=" * 60)

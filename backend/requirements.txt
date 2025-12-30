@@ -1,0 +1,114 @@
+# ============================================================
+# 文件: requirements.txt
+# 功能: Python项目依赖包定义
+# 说明: 使用 pip install -r requirements.txt 安装所有依赖
+# ============================================================
+
+# ========== PDF处理 ==========
+# PDF解析主力库，支持文本和表格提取
+pdfplumber==0.11.0
+
+# PDF备用库，用于低级PDF操作
+PyPDF2==3.0.1
+
+# PDF转图片（需要安装poppler）
+pdf2image==1.16.3
+
+# ========== OCR识别 ==========
+# PaddleOCR - 中文OCR最佳选择
+# 稳定组合：Python 3.11 + PaddlePaddle 2.6.2 + PaddleOCR 2.7.3
+# 注意：已适配ARM macOS，与ocr_engine.py代码完全兼容
+paddlepaddle==2.6.2  # CPU版本，稳定版本（GPU版本需单独安装）
+paddleocr==2.7.3  # 与PaddlePaddle 2.6.2兼容，已在生产验证
+
+# 备用OCR引擎
+pytesseract==0.3.10  # 需要安装Tesseract-OCR
+
+# ========== 图像处理 ==========
+# OpenCV - 图像预处理
+# 注意：PaddleOCR 2.7.3要求opencv-python<=4.6.0.66
+opencv-python==4.6.0.66
+
+# 图像处理基础库
+# 注意：Python 3.13+ 需要Pillow 10.3.0+
+Pillow>=10.3.0
+
+# 图像增强
+scikit-image==0.22.0
+
+# ========== 数据处理 ==========
+# 数据分析和处理
+pandas==2.1.4
+
+# 数值计算
+numpy==1.26.2
+
+# ========== 测试框架 ==========
+# 单元测试框架
+pytest==7.4.3
+
+# 测试覆盖率
+pytest-cov==4.1.0
+
+# 异步测试支持
+pytest-asyncio==0.21.1
+
+# HTML测试报告
+pytest-html==4.1.1
+
+# ========== 代码质量 ==========
+# 代码格式化
+black==23.12.1
+
+# Import排序
+isort==5.13.2
+
+# 静态类型检查
+mypy==1.7.1
+
+# 代码检查
+flake8==6.1.0
+
+# ========== 工具库 ==========
+# 日期时间处理
+python-dateutil==2.8.2
+
+# 命令行参数解析
+click==8.1.7
+
+# 进度条
+tqdm==4.66.1
+
+# 彩色终端输出
+colorama==0.4.6
+
+# JSON处理增强
+orjson==3.9.10
+
+# ========== Web开发依赖（Phase 3启用） ==========
+# Web框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# 数据库
+sqlalchemy==2.0.23
+alembic==1.13.0
+pymysql==1.1.0  # MySQL连接器（用于SQLAlchemy MySQL支持）
+# psycopg2-binary==2.9.9  # PostgreSQL支持（按需安装）
+
+# 认证（后续需要时启用）
+# python-jose[cryptography]==3.3.0
+# passlib[bcrypt]==1.7.4
+
+# 数据验证
+pydantic==2.5.2
+pydantic-settings==2.1.0  # 配置管理
+# email-validator==2.1.0  # 按需安装
+
+# 异步任务（可选，后续启用）
+# celery==5.3.4
+# redis==5.0.1
+
+# macOS系统框架访问（可选，用于Vision OCR）
+pyobjc>=9.0.1  # 支持macOS 14+和Python 3.11+

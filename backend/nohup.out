@@ -1,0 +1,15 @@
+INFO:     Started server process [18981]
+INFO:     Waiting for application startup.
+2025-12-18 20:32:43,743 - main - INFO - ============================================================
+2025-12-18 20:32:43,743 - main - INFO - 启动Walmart PDF解析系统API服务
+2025-12-18 20:32:43,743 - main - INFO - ============================================================
+2025-12-18 20:32:43,744 - main - INFO - ✓ 数据库连接成功
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2025-12-18 20:34:47,094 - main - INFO - 关闭Walmart PDF解析系统API服务
+INFO:     Application shutdown complete.
+INFO:     Finished server process [18981]
+✓ 数据库初始化完成 (sqlite)
+✓ 数据库URL: sqlite:////Users/jiaxinming/JxmWork/walmart-a/walmart_pdf_parser.db

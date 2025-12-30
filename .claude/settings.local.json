@@ -1,0 +1,89 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source venv/bin/activate)",
+      "Bash(python scripts/verify_json_output.py:*)",
+      "Bash(python scripts/test_full_pipeline_grayscale.py:*)",
+      "Bash(python3:*)",
+      "Bash(done)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(npm start)",
+      "Bash(pkill:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)"
+    ]
+  },
+  "allowedCommands": [
+    {
+      "description": "允许运行所有测试脚本（无需确认）",
+      "command": "python scripts/test_*.py"
+    },
+    {
+      "description": "允许运行测试脚本中的批量PDF分割测试",
+      "command": "python scripts/test_batch_pdf_split.py"
+    },
+    {
+      "description": "允许运行测试脚本中的图像分割测试",
+      "command": "python scripts/test_image_split.py"
+    },
+    {
+      "description": "允许运行pytest单元测试（无需确认）",
+      "command": "pytest backend/tests/*"
+    },
+    {
+      "description": "允许运行pytest单元测试（详细输出）",
+      "command": "pytest backend/tests/* -v"
+    },
+    {
+      "description": "允许生成测试覆盖率报告",
+      "command": "pytest --cov=backend/app --cov-report=* backend/tests/*"
+    },
+    {
+      "description": "允许运行代码格式化工具（black）",
+      "command": "black backend/app/*"
+    },
+    {
+      "description": "允许运行import排序工具（isort）",
+      "command": "isort backend/app/*"
+    },
+    {
+      "description": "允许运行类型检查工具（mypy）",
+      "command": "mypy backend/app/*"
+    },
+    {
+      "description": "允许运行OCR可视化脚本",
+      "command": "python scripts/visualize_*.py"
+    },
+    {
+      "description": "允许运行调试脚本",
+      "command": "python scripts/debug_*.py"
+    },
+    {
+      "description": "允许查看Python版本",
+      "command": "python --version"
+    },
+    {
+      "description": "允许查看pip已安装包",
+      "command": "pip list"
+    },
+    {
+      "description": "允许查看pip包详情",
+      "command": "pip show *"
+    }
+  ],
+  "_comments": [
+    "此配置文件定义了Claude可以无需用户确认就执行的命令",
+    "使用通配符(*)来匹配多个命令",
+    "建议只添加安全的、非破坏性的命令",
+    "如果需要添加新命令，请确保：",
+    "  1. 命令不会删除或修改重要文件",
+    "  2. 命令不会影响系统安全",
+    "  3. 命令的执行结果可预期",
+    "",
+    "未来可能添加的命令：",
+    "  - python scripts/create_calibration.py（校准相关）",
+    "  - alembic *（数据库迁移，Phase 3启用）",
+    "  - git status/git diff（只读Git命令）"
+  ]
+}

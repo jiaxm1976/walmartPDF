@@ -1,0 +1,440 @@
+# ============================================================
+# 文件: backend/app/services/left_section_ocr.py
+# 功能: 左侧板块OCR识别和数据提取
+# 作者: 开发团队
+# 创建时间: 2025-12-16
+# 说明: Step 5 - OCR识别各左侧板块并提取结构化数据输出JSON
+# ============================================================
+
+import logging
+import re
+import json
+from typing import Dict, List, Tuple, Any, Optional
+from pathlib import Path
+import cv2
+import numpy as np
+
+from app.services.ocr_engine import OCREngine
+
+logger = logging.getLogger(__name__)
+
+
+class LeftSectionOCR:
+    """左侧板块OCR识别和数据提取器.
+
+    对Step 4切分的7个左侧板块图片进行OCR识别，
+    提取结构化数据并输出JSON格式。
+
+    板块类型：
+    - header: 头部信息（期初余额、备用金、回款等待）
+    - sales: 销售明细
+    - refund: 退款明细
+    - adjustment: 调整明细
+    - wfs: 沃尔玛商品服务明细
+    - other: 其他活动明细
+    - footer: 尾部信息（向您支付的金额、期末余额）
+    """
+
+    def __init__(self, ocr_engine: OCREngine):
+        """初始化OCR识别器.
+
+        Args:
+            ocr_engine: OCR引擎实例
+        """
+        self.ocr_engine = ocr_engine
+        logger.info("=" * 60)
+        logger.info("初始化左侧板块OCR识别器")
+        logger.info("=" * 60)
+
+
+    def extract_text_lines(self, image: np.ndarray) -> List[Tuple[str, float]]:
+        """从图片中提取文本行.
+
+        OCR可能将同一行文本分成多个块（如标签和金额分开）。
+        本函数将Y坐标相近的文本块合并为一行。
+
+        Args:
+            image: 输入图片（numpy数组）
+
+        Returns:
+            List[Tuple[str, float]]: 文本行列表 [(文本, Y坐标), ...]
+                按Y坐标从上到下排序
+        """
+        # OCR识别
+        ocr_results = self.ocr_engine.recognize_image(image)
+
+        # 提取文本、X坐标和Y坐标
+        text_blocks = []
+        for box, (text, confidence) in ocr_results:
+            # 计算X坐标（左边界）和Y坐标（中心）
+            x_coord = int(box[0][0])  # 左上角X
+            y_coord = int((box[0][1] + box[2][1]) / 2)  # Y中心
+            text_blocks.append((text, x_coord, y_coord))
+
+        # 按Y坐标排序
+        text_blocks.sort(key=lambda x: x[2])
+
+        # 合并Y坐标相近的文本块（阈值：30像素）
+        Y_THRESHOLD = 30
+        merged_lines = []
+        i = 0
+
+        while i < len(text_blocks):
+            current_text, current_x, current_y = text_blocks[i]
+            line_blocks = [(current_text, current_x)]
+
+            # 查找Y坐标相近的其他块
+            j = i + 1
+            while j < len(text_blocks):
+                next_text, next_x, next_y = text_blocks[j]
+                if abs(next_y - current_y) <= Y_THRESHOLD:
+                    line_blocks.append((next_text, next_x))
+                    j += 1
+                else:
+                    break
+
+            # 按X坐标排序（从左到右）
+            line_blocks.sort(key=lambda x: x[1])
+
+            # 合并文本（用空格连接）
+            merged_text = ' '.join([text for text, _ in line_blocks])
+            merged_lines.append((merged_text, current_y))
+
+            i = j
+
+        return merged_lines
+
+
+    def extract_key_value_pairs(
+        self,
+        text_lines: List[Tuple[str, float]],
+        extract_total_from_title: bool = False
+    ) -> Dict[str, str]:
+        """从文本行中提取键值对.
+
+        解析模式：
+        1. "标签 金额" -> {"标签": "金额"}（优先）
+        2. "板块标题 金额" -> {"总计": "金额"}（如果extract_total_from_title=True）
+        3. "总计:" + "金额" -> {"总计": "金额"}
+        4. "标签" + "金额" (分两行) -> {"标签": "金额"}
+
+        Args:
+            text_lines: 文本行列表
+            extract_total_from_title: 是否从板块标题行提取总计
+
+        Returns:
+            Dict[str, str]: 键值对字典
+        """
+        data = {}
+        i = 0
+
+        # 板块标题列表
+        section_titles = ['销售', '退款', '调整', '沃尔玛商品服务(WFS)', '其他活动']
+
+        while i < len(text_lines):
+            text = text_lines[i][0].strip()
+
+            # 处理板块标题行（如"销售 1,160.45美元"）
+            if extract_total_from_title:
+                for title in section_titles:
+                    if text.startswith(title):
+                        # 检查是否有金额
+                        amount_match = re.search(r'([-−]?\d+[,\d]*\.?\d*)\s*美元', text)
+                        if amount_match:
+                            value = amount_match.group(1).strip().replace('−', '-')
+                            data['总计'] = value
+                            i += 1
+                            break
+                else:
+                    # 不是板块标题，继续处理
+                    pass
+                # 如果是板块标题但没有金额，继续
+                if text in section_titles:
+                    i += 1
+                    continue
+
+            # 跳过纯板块标题（没有金额的）
+            if text in section_titles:
+                i += 1
+                continue
+
+            # 模式1（优先）: "标签 金额" 在同一行
+            # 例如: "产品价格 1,355.89美元"
+            # 所有明细项都在本行
+            match = re.match(r'(.+?)\s+([-−]?\d+[,\d]*\.?\d*)\s*美元', text)
+            if match:
+                key = match.group(1).strip()
+                value = match.group(2).strip()
+                # 替换中文负号为英文负号
+                value = value.replace('−', '-')
+                data[key] = value
+                i += 1
+                continue
+
+            # 模式2: "总计:" 或 "总计" + "金额"
+            # 增强识别：支持"总计:"、"总计："、"总计"等多种格式
+            if '总计' in text:
+                # 先尝试在同一行查找金额
+                amount_match = re.search(r'([-−]?\d+[,\d]*\.?\d*)\s*美元', text)
+                if amount_match:
+                    value = amount_match.group(1).strip().replace('−', '-')
+                    data['总计'] = value  # 统一使用"总计"（无冒号）
+                    i += 1
+                    continue
+                # 如果同一行没有金额，查找下一行
+                elif i + 1 < len(text_lines):
+                    next_text = text_lines[i + 1][0].strip()
+                    amount_match = re.search(r'([-−]?\d+[,\d]*\.?\d*)\s*美元', next_text)
+                    if amount_match:
+                        value = amount_match.group(1).strip().replace('−', '-')
+                        data['总计'] = value  # 统一使用"总计"（无冒号）
+                        i += 2
+                        continue
+                # 如果下一行也不是金额，继续
+                i += 1
+                continue
+
+            # 模式3: 标签和金额分两行（用于header/footer特殊字段）
+            # 例如: "向您支付的金额" (第i行)
+            #       "0.00美元" (第i+1行，大字体)
+            if i + 1 < len(text_lines):
+                next_text = text_lines[i + 1][0].strip()
+                # 检查下一行是否是金额
+                amount_match = re.match(r'([-−]?\d+[,\d]*\.?\d*)\s*美元', next_text)
+                if amount_match:
+                    key = text
+                    value = amount_match.group(1).strip().replace('−', '-')
+                    data[key] = value
+                    i += 2
+                    continue
+
+            i += 1
+
+        return data
+
+
+    def process_header_section(self, image: np.ndarray) -> Dict[str, Any]:
+        """处理header板块.
+
+        提取内容：
+        - 开始日期
+        - 结束日期
+        - 期初余额
+        - 备用金
+        - 回款等待
+
+        Args:
+            image: header板块图片
+
+        Returns:
+            Dict: header数据
+        """
+        logger.info("处理header板块...")
+        text_lines = self.extract_text_lines(image)
+
+        data = {
+            "开始日期": "",
+            "结束日期": "",
+            "期初余额": "0.00",
+            "备用金": "0.00",
+            "回款等待": "0.00"
+        }
+
+        # 提取对账单日期范围
+        for text, _ in text_lines:
+            # 匹配格式: "2024年12月6日 - 2025年1月11日"
+            date_match = re.search(r'(\d{4}年\d{1,2}月\d{1,2}日)\s*[-−]\s*(\d{4}年\d{1,2}月\d{1,2}日)', text)
+            if date_match:
+                data["开始日期"] = date_match.group(1)
+                data["结束日期"] = date_match.group(2)
+                break
+
+        # 提取键值对（过滤掉日期相关的键，避免重复）
+        kv_pairs = self.extract_key_value_pairs(text_lines)
+        for key, value in kv_pairs.items():
+            # 跳过日期键（避免重复）
+            if '年' in key and '月' in key and '日' in key:
+                continue
+            data[key] = value
+
+        logger.info(f"  提取到 {len(data)} 个字段")
+        return data
+
+
+    def process_sales_section(self, image: np.ndarray) -> Dict[str, str]:
+        """处理sales板块.
+
+        Args:
+            image: sales板块图片
+
+        Returns:
+            Dict: sales数据
+        """
+        logger.info("处理sales板块...")
+        text_lines = self.extract_text_lines(image)
+        data = self.extract_key_value_pairs(text_lines, extract_total_from_title=True)
+        logger.info(f"  提取到 {len(data)} 个字段")
+        return data
+
+
+    def process_refund_section(self, image: np.ndarray) -> Dict[str, str]:
+        """处理refund板块.
+
+        Args:
+            image: refund板块图片
+
+        Returns:
+            Dict: refund数据
+        """
+        logger.info("处理refund板块...")
+        text_lines = self.extract_text_lines(image)
+        data = self.extract_key_value_pairs(text_lines, extract_total_from_title=True)
+        logger.info(f"  提取到 {len(data)} 个字段")
+        return data
+
+
+    def process_adjustment_section(self, image: np.ndarray) -> Dict[str, str]:
+        """处理adjustment板块.
+
+        Args:
+            image: adjustment板块图片
+
+        Returns:
+            Dict: adjustment数据
+        """
+        logger.info("处理adjustment板块...")
+        text_lines = self.extract_text_lines(image)
+        data = self.extract_key_value_pairs(text_lines, extract_total_from_title=True)
+        logger.info(f"  提取到 {len(data)} 个字段")
+        return data
+
+
+    def process_wfs_section(self, image: np.ndarray) -> Dict[str, str]:
+        """处理wfs板块.
+
+        Args:
+            image: wfs板块图片
+
+        Returns:
+            Dict: wfs数据
+        """
+        logger.info("处理wfs板块...")
+        text_lines = self.extract_text_lines(image)
+        data = self.extract_key_value_pairs(text_lines, extract_total_from_title=True)
+        logger.info(f"  提取到 {len(data)} 个字段")
+        return data
+
+
+    def process_other_section(self, image: np.ndarray) -> Dict[str, str]:
+        """处理other板块.
+
+        Args:
+            image: other板块图片
+
+        Returns:
+            Dict: other数据
+        """
+        logger.info("处理other板块...")
+        text_lines = self.extract_text_lines(image)
+        data = self.extract_key_value_pairs(text_lines, extract_total_from_title=True)
+        logger.info(f"  提取到 {len(data)} 个字段")
+        return data
+
+
+    def process_footer_section(self, image: np.ndarray) -> Dict[str, str]:
+        """处理footer板块.
+
+        提取内容：
+        - 向您支付的金额
+        - 期末余额
+
+        Args:
+            image: footer板块图片
+
+        Returns:
+            Dict: footer数据
+        """
+        logger.info("处理footer板块...")
+        text_lines = self.extract_text_lines(image)
+
+        data = {
+            "向您支付的金额": "0.00",
+            "期末余额": "0.00"
+        }
+
+        # 提取键值对
+        kv_pairs = self.extract_key_value_pairs(text_lines)
+        data.update(kv_pairs)
+
+        logger.info(f"  提取到 {len(data)} 个字段")
+        return data
+
+
+    def process_all_sections(
+        self,
+        section_images: Dict[str, np.ndarray]
+    ) -> Dict[str, Any]:
+        """处理所有板块并生成完整的JSON数据.
+
+        Args:
+            section_images: 板块图片字典
+                {
+                    'header': image_array,
+                    'sales': image_array,
+                    ...
+                }
+
+        Returns:
+            Dict: 完整的结构化数据
+        """
+        logger.info("=" * 60)
+        logger.info("开始处理所有板块")
+        logger.info("=" * 60)
+
+        result = {}
+
+        # 处理各个板块
+        if 'header' in section_images:
+            result['header'] = self.process_header_section(section_images['header'])
+
+        if 'sales' in section_images:
+            result['sales'] = self.process_sales_section(section_images['sales'])
+
+        if 'refund' in section_images:
+            result['refund'] = self.process_refund_section(section_images['refund'])
+
+        if 'adjustment' in section_images:
+            result['adjustment'] = self.process_adjustment_section(section_images['adjustment'])
+
+        if 'wfs' in section_images:
+            result['wfs'] = self.process_wfs_section(section_images['wfs'])
+
+        if 'other' in section_images:
+            result['other'] = self.process_other_section(section_images['other'])
+
+        if 'footer' in section_images:
+            result['footer'] = self.process_footer_section(section_images['footer'])
+
+        logger.info("=" * 60)
+        logger.info(f"所有板块处理完成，共{len(result)}个板块")
+        logger.info("=" * 60)
+
+        return result
+
+
+    def save_json(self, data: Dict[str, Any], output_path: str):
+        """保存JSON数据到文件.
+
+        Args:
+            data: 结构化数据
+            output_path: 输出文件路径
+        """
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"JSON数据已保存: {output_path}")
+
+
+# ============================================================
+# END OF left_section_ocr.py
+# ============================================================

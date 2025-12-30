@@ -1,0 +1,1306 @@
+# ============================================================
+# 文件: services/image_splitter.py
+# 功能: 图像板块分割服务 - 将PDF图片分割为多个独立板块
+# 作者: 开发团队
+# 创建时间: 2025-12-14
+# 最后修改: 2025-12-14
+# 版本: v1.0
+# ============================================================
+
+"""
+图像板块分割模块
+
+实现功能：
+1. 横向分割：将图片按62%分成左右两部分
+2. 纵向分割：将左侧图片分割为7个独立板块
+3. OCR关键词定位：识别板块分界关键词
+4. 智能边界计算：基于关键词和"总计"计算板块边界
+5. 重叠边界调整：自动处理边界重叠问题
+
+技术方案详见: docs/image_split_plan_v1.0.md
+"""
+
+import os  # 文件路径操作
+import logging  # 日志记录
+import statistics  # 统计函数（中位数）
+from typing import Dict, Tuple, List, Any, Optional  # 类型提示
+import cv2  # OpenCV图像处理
+import numpy as np  # 数组操作
+from pathlib import Path  # 路径处理
+
+# 导入项目内部模块
+from backend.app.services.ocr_engine import OCREngine  # OCR引擎
+from backend.app.utils.image_utils import ImageProcessor  # 图像处理工具
+
+# 创建logger实例
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 自定义异常类
+# ============================================================
+
+class KeywordNotFoundError(Exception):
+    """关键词识别失败异常.
+
+    当必需的关键词（如"销售"、"退款"）未在OCR结果中找到时抛出。
+    """
+    pass
+
+
+class OCRError(Exception):
+    """OCR识别失败异常.
+
+    当OCR引擎无法识别图片或返回空结果时抛出。
+    """
+    pass
+
+
+# ============================================================
+# 图像分割器主类
+# ============================================================
+
+class ImageSplitter:
+    """图像板块分割器.
+
+    负责将沃尔玛对账单的PDF图片分割为多个独立的数据板块。
+
+    工作流程：
+    1. 横向分割图片（62%位置）
+    2. OCR识别左侧图片，提取关键词坐标
+    3. 计算标准行高
+    4. 计算7个板块的边界
+    5. 裁剪并保存板块图片
+
+    Attributes:
+        ocr_engine: OCR识别引擎实例
+        image_processor: 图像处理工具实例
+        split_ratio: 横向分割比例（默认0.62）
+    """
+
+    def __init__(self, ocr_engine: Optional[OCREngine] = None):
+        """初始化图像分割器.
+
+        Args:
+            ocr_engine: OCR引擎实例，如果为None则创建新实例
+        """
+        # 初始化OCR引擎
+        if ocr_engine is None:
+            logger.info("创建新的OCR引擎实例")
+            self.ocr_engine = OCREngine()
+        else:
+            self.ocr_engine = ocr_engine
+
+        # 初始化图像处理器
+        self.image_processor = ImageProcessor()
+
+        # 横向分割比例（左侧占63%）
+        self.split_ratio = 0.63
+
+        logger.info("ImageSplitter初始化完成")
+
+
+    # ========================================
+    # 1. 横向分割功能
+    # ========================================
+
+    def split_horizontal(self, image: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """横向分割图片.
+
+        将图片按照指定比例分割成左右两部分。
+        左侧为主数据区（需要进一步分割），右侧保持完整。
+
+        Args:
+            image: 输入图片（numpy数组）
+
+        Returns:
+            tuple: (left_image, right_image) 左右两部分图片
+
+        Example:
+            >>> image = cv2.imread("page1.png")
+            >>> left, right = splitter.split_horizontal(image)
+            >>> print(f"左侧尺寸: {left.shape}, 右侧尺寸: {right.shape}")
+        """
+        # 获取图片尺寸
+        height, width = image.shape[:2]
+
+        # 计算分割线X坐标
+        split_x = int(width * self.split_ratio)
+
+        logger.info(f"横向分割：图片宽度={width}px, 分割位置={split_x}px ({self.split_ratio*100}%)")
+
+        # 分割图片
+        # 左侧：从0到split_x
+        left_image = image[0:height, 0:split_x]
+
+        # 右侧：从split_x到width
+        right_image = image[0:height, split_x:width]
+
+        logger.info(f"分割完成 - 左侧: {left_image.shape}, 右侧: {right_image.shape}")
+
+        return left_image, right_image
+
+
+    # ========================================
+    # 2. OCR关键词定位功能
+    # ========================================
+
+    def extract_keywords_positions(self, image: np.ndarray) -> Tuple[Dict, List]:
+        """提取关键词的Y坐标.
+
+        使用OCR识别图片中的所有文本，提取特定关键词的Y坐标。
+
+        需识别的关键词：
+        - 回款等待
+        - 销售
+        - 退款
+        - 调整
+        - 沃尔玛商品服务(WFS)
+        - 其他活动
+        - 向您支付的金额
+
+        Args:
+            image: 左侧图片（numpy数组）
+
+        Returns:
+            tuple: (keyword_map, ocr_results)
+                - keyword_map: 关键词位置映射字典
+                - ocr_results: 完整OCR识别结果
+
+        Raises:
+            OCRError: OCR识别失败或返回空结果
+        """
+        logger.info("开始OCR识别，提取关键词坐标")
+
+        # 执行OCR识别
+        try:
+            ocr_results = self.ocr_engine.recognize_image(image)
+        except Exception as e:
+            logger.error(f"OCR识别失败: {e}")
+            raise OCRError(f"OCR识别失败: {e}")
+
+        # 检查OCR结果
+        if not ocr_results or len(ocr_results) == 0:
+            logger.error("OCR返回空结果")
+            raise OCRError("OCR识别结果为空")
+
+        # 初始化关键词映射表
+        keyword_map = {
+            'header': {},       # 头部板块关键词
+            'sales': {},        # 销售板块关键词
+            'refund': {},       # 退款板块关键词
+            'adjustment': {},   # 调整板块关键词
+            'wfs': {},          # WFS板块关键词
+            'other': {},        # 其他活动板块关键词
+            'footer': {}        # 尾部板块关键词
+        }
+
+        # 遍历OCR结果，提取关键词
+        # OCR返回格式: [(box, (text, confidence)), ...]
+        for box, (text, confidence) in ocr_results:
+            # 获取文本内容
+            text = text.strip()  # 去除首尾空格
+
+            # 获取文本框中心Y坐标
+            # box格式: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+            # 其中: [x1,y1]=左上角, [x2,y2]=右上角, [x3,y3]=右下角, [x4,y4]=左下角
+            #
+            # 使用中心Y坐标的原因：
+            # 1. 中心坐标不受字体大小变化影响，更稳定
+            # 2. 避免baseline和box顶部的不一致性问题
+            # 3. 对于不同大小的文字，中心位置的偏差最小
+            y_top = box[0][1]      # 顶部Y坐标
+            y_bottom = box[2][1]   # 底部Y坐标
+            y_raw = int((y_top + y_bottom) / 2)  # OCR原始中心Y坐标
+
+            # ===== 应用坐标校准 (2025-12-16) =====
+            # 修复坐标偏差问题：OCR识别的坐标存在系统性偏差（约50px）
+            # 通过预先生成的校准函数进行修正
+            y_coord = self.ocr_engine.calibrate_y_coordinate(y_raw)
+            offset = y_coord - y_raw  # 计算实际偏移量
+
+            # 记录校准详情（DEBUG级别）
+            logger.debug(f"坐标校准: Y_raw={y_raw} → Y_calibrated={y_coord}, offset={offset:+d}px")
+            # =====================================
+
+            # 精确匹配或包含匹配关键词
+            # 注意：对于某些关键词使用包含匹配（如"总计"可能是"总计："）
+
+            # Header板块: 精确匹配"回款等待"
+            if text == '回款等待':
+                keyword_map['header']['回款等待'] = y_coord
+                logger.debug(f"找到关键词 '回款等待': Y_raw={y_raw}, Y_calibrated={y_coord}, offset={offset:+d}px")
+
+            # Sales板块: 精确匹配"销售"或包含"销售"（容忍标点）
+            elif text == '销售' or text.strip() == '销售' or (text.startswith('销售') and len(text) <= 3):
+                keyword_map['sales']['销售'] = y_coord
+                logger.debug(f"找到关键词 '销售': Y_raw={y_raw}, Y_calibrated={y_coord}, offset={offset:+d}px (OCR文本='{text}')")
+
+            # Refund板块: 精确匹配"退款"或包含"退款"（容忍标点）
+            elif text == '退款' or text.strip() == '退款' or (text.startswith('退款') and len(text) <= 3):
+                keyword_map['refund']['退款'] = y_coord
+                logger.debug(f"找到关键词 '退款': Y_raw={y_raw}, Y_calibrated={y_coord}, offset={offset:+d}px (OCR文本='{text}')")
+
+            # Adjustment板块: 精确匹配"调整"或以"调整"开头（容忍标点和后续文字）
+            elif text == '调整' or text.strip() == '调整' or text.startswith('调整'):
+                keyword_map['adjustment']['调整'] = y_coord
+                logger.debug(f"找到关键词 '调整': Y_raw={y_raw}, Y_calibrated={y_coord}, offset={offset:+d}px (OCR文本='{text}')")
+
+            # WFS板块: 包含"沃尔玛商品服务"（兼容各种括号形式）
+            elif '沃尔玛商品服务' in text:
+                keyword_map['wfs']['沃尔玛商品服务'] = y_coord
+                logger.debug(f"找到关键词 '沃尔玛商品服务': Y_raw={y_raw}, Y_calibrated={y_coord}, offset={offset:+d}px (OCR文本='{text}')")
+
+            # Other板块: 精确匹配"其他活动"或包含"其他活动"
+            elif text == '其他活动' or text.strip() == '其他活动' or '其他活动' in text:
+                keyword_map['other']['其他活动'] = y_coord
+                logger.debug(f"找到关键词 '其他活动': Y_raw={y_raw}, Y_calibrated={y_coord}, offset={offset:+d}px (OCR文本='{text}')")
+
+            # Footer板块: 包含"向您支付"即可
+            elif '向您支付' in text:
+                keyword_map['footer']['向您支付的金额'] = y_coord
+                logger.debug(f"找到关键词 '向您支付的金额': Y_raw={y_raw}, Y_calibrated={y_coord}, offset={offset:+d}px (OCR文本='{text}')")
+
+        # 记录识别结果统计
+        total_keywords = sum(len(v) for v in keyword_map.values())
+        logger.info(f"关键词识别完成，共找到 {total_keywords} 个关键词")
+
+        return keyword_map, ocr_results
+
+
+    # ========================================
+    # 3. 行高计算功能
+    # ========================================
+
+    def calculate_line_height(self, ocr_results: List[Dict]) -> int:
+        """计算标准行高（使用文本框高度的中位数）.
+
+        遍历所有OCR识别的文本框，计算每个文本框的高度，
+        然后取中位数作为标准行高。
+
+        Args:
+            ocr_results: OCR识别结果列表
+
+        Returns:
+            int: 标准行高（像素值）
+
+        Example:
+            >>> line_height = splitter.calculate_line_height(ocr_results)
+            >>> print(f"标准行高: {line_height}px")
+            标准行高: 85px
+        """
+        heights = []
+
+        # 计算每个文本框的高度
+        # OCR返回格式: [(box, (text, confidence)), ...]
+        for box, (text, confidence) in ocr_results:
+            # box格式: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+
+            # 文本框高度 = 左下角Y - 左上角Y
+            height = box[3][1] - box[0][1]
+            heights.append(height)
+
+        # 计算中位数
+        line_height = int(statistics.median(heights))
+
+        logger.info(f"计算得到标准行高: {line_height}px (基于{len(heights)}个文本框)")
+
+        return line_height
+
+
+    # ========================================
+    # 4. 板块边界计算功能
+    # ========================================
+
+    def _get_section_keyword_y(self, section_key: str, keyword_map: Dict) -> Optional[int]:
+        """获取指定板块的关键字Y坐标.
+
+        Args:
+            section_key: 板块键名（如'sales', 'refund'等）
+            keyword_map: 关键词位置映射表
+
+        Returns:
+            关键字的Y坐标，如果不存在则返回None
+        """
+        if section_key == 'sales':
+            return keyword_map['sales'].get('销售')
+        elif section_key == 'refund':
+            return keyword_map['refund'].get('退款')
+        elif section_key == 'adjustment':
+            return keyword_map['adjustment'].get('调整')
+        elif section_key == 'wfs':
+            return keyword_map['wfs'].get('沃尔玛商品服务')
+        elif section_key == 'other':
+            return keyword_map['other'].get('其他活动')
+        elif section_key == 'footer':
+            return keyword_map['footer'].get('向您支付的金额')
+        else:
+            return None
+
+
+    def _find_next_section_keyword(self, current_section: str, keyword_map: Dict) -> Optional[int]:
+        """找到当前板块之后第一个存在的板块的关键字Y坐标.
+
+        Args:
+            current_section: 当前板块键名
+            keyword_map: 关键词位置映射表
+
+        Returns:
+            下一个板块关键字的Y坐标，如果不存在则返回None
+        """
+        # 板块顺序
+        section_order = ['header', 'sales', 'refund', 'adjustment', 'wfs', 'other', 'footer']
+
+        # 找到当前板块在顺序中的位置
+        try:
+            current_index = section_order.index(current_section)
+        except ValueError:
+            logger.error(f"未知的板块: {current_section}")
+            return None
+
+        # 从下一个板块开始查找
+        for next_section in section_order[current_index + 1:]:
+            keyword_y = self._get_section_keyword_y(next_section, keyword_map)
+            if keyword_y is not None:
+                logger.debug(f"找到{current_section}的下一个板块: {next_section}, Y={keyword_y}")
+                return keyword_y
+
+        # 没有找到下一个板块
+        return None
+
+
+    def calculate_section_boundaries(
+        self,
+        keyword_map: Dict,
+        line_height: int,
+        image_height: int
+    ) -> Dict[str, Dict[str, int]]:
+        """计算7个板块的边界坐标.
+
+        使用统一的-80px偏移量规则计算所有板块边界。
+
+        边界规则：
+        - 当前板块开始 = 关键词Y - 80px
+        - 当前板块结束 = 下一个板块关键词Y - 80px
+        - 特殊情况：Header从0开始，Footer结束于图片底部
+        - 不使用"总计"进行边界计算
+
+        板块定义：
+        1. header: 0 → "销售"Y-80
+        2. sales: "销售"Y-80 → "退款"Y-80
+        3. refund: "退款"Y-80 → 下一个板块Y-80
+        4. adjustment (可选): "调整"Y-80 → 下一个板块Y-80
+        5. wfs (可选): "沃尔玛商品服务"Y-80 → 下一个板块Y-80
+        6. other (可选): "其他活动"Y-80 → "向您支付的金额"Y-80
+        7. footer: "向您支付的金额"Y-80 → 图片底部
+
+        Args:
+            keyword_map: 关键词位置映射表
+            line_height: 标准行高（本方法中不再使用，保留参数兼容性）
+            image_height: 图片总高度
+
+        Returns:
+            dict: 板块边界字典
+                {
+                    'header': {'start': 0, 'end': 1150},
+                    'sales': {'start': 1150, 'end': 2850},
+                    ...
+                }
+
+        Raises:
+            KeywordNotFoundError: 如果必需的关键词未找到
+        """
+        logger.info("开始计算板块边界（统一-80px偏移量方案）")
+
+        # 统一偏移量常量
+        OFFSET = 80
+
+        boundaries = {}
+
+        # 获取所有必需关键词
+        sales_keyword_y = keyword_map['sales'].get('销售')
+        refund_keyword_y = keyword_map['refund'].get('退款')
+        footer_keyword_y = keyword_map['footer'].get('向您支付的金额')
+
+        # 检查必需关键词
+        if sales_keyword_y is None:
+            raise KeywordNotFoundError("未找到'销售'关键词")
+        if refund_keyword_y is None:
+            raise KeywordNotFoundError("未找到'退款'关键词")
+        if footer_keyword_y is None:
+            raise KeywordNotFoundError("未找到'向您支付的金额'关键词")
+
+        # ===== 板块1：头部 =====
+        logger.debug("计算板块1：头部")
+        header_start = 0  # 从第一行开始
+        header_end = sales_keyword_y - OFFSET  # 结束于销售关键词-80px
+
+        boundaries['header'] = {'start': header_start, 'end': header_end}
+        logger.debug(f"  header: Y={header_start}~{header_end}")
+
+
+        # ===== 板块2：销售 =====
+        logger.debug("计算板块2：销售")
+        sales_start = sales_keyword_y - OFFSET  # 起始于销售关键词-80px
+        sales_end = refund_keyword_y - OFFSET  # 结束于退款关键词-80px
+
+        boundaries['sales'] = {'start': sales_start, 'end': sales_end}
+        logger.debug(f"  sales: Y={sales_start}~{sales_end}")
+
+
+        # ===== 板块3：退款 =====
+        logger.debug("计算板块3：退款")
+        refund_start = refund_keyword_y - OFFSET  # 起始于退款关键词-80px
+
+        # 找到退款板块的下一个板块
+        next_keyword_y = self._find_next_section_keyword('refund', keyword_map)
+        if next_keyword_y is None:
+            # 如果没有找到下一个板块（理论上不应该发生，因为footer是必需的）
+            raise KeywordNotFoundError("未找到退款板块之后的任何关键词")
+
+        refund_end = next_keyword_y - OFFSET  # 结束于下一个板块关键词-80px
+
+        boundaries['refund'] = {'start': refund_start, 'end': refund_end}
+        logger.debug(f"  refund: Y={refund_start}~{refund_end}")
+
+
+        # ===== 板块4：调整（可选）=====
+        adjustment_keyword_y = keyword_map['adjustment'].get('调整')
+
+        if adjustment_keyword_y is not None:
+            logger.debug("计算板块4：调整")
+            adjustment_start = adjustment_keyword_y - OFFSET
+
+            # 找到调整板块的下一个板块
+            next_keyword_y = self._find_next_section_keyword('adjustment', keyword_map)
+            if next_keyword_y is None:
+                raise KeywordNotFoundError("未找到调整板块之后的任何关键词")
+
+            adjustment_end = next_keyword_y - OFFSET
+
+            boundaries['adjustment'] = {'start': adjustment_start, 'end': adjustment_end}
+            logger.debug(f"  adjustment: Y={adjustment_start}~{adjustment_end}")
+        else:
+            logger.warning("跳过调整板块（关键词未找到）")
+            boundaries['adjustment'] = {'start': 0, 'end': 0}
+
+
+        # ===== 板块5：WFS费用（可选）=====
+        wfs_keyword_y = keyword_map['wfs'].get('沃尔玛商品服务')
+
+        if wfs_keyword_y is not None:
+            logger.debug("计算板块5：WFS费用")
+            wfs_start = wfs_keyword_y - OFFSET
+
+            # 找到WFS板块的下一个板块
+            next_keyword_y = self._find_next_section_keyword('wfs', keyword_map)
+            if next_keyword_y is None:
+                raise KeywordNotFoundError("未找到WFS板块之后的任何关键词")
+
+            wfs_end = next_keyword_y - OFFSET
+
+            boundaries['wfs'] = {'start': wfs_start, 'end': wfs_end}
+            logger.debug(f"  wfs: Y={wfs_start}~{wfs_end}")
+        else:
+            logger.warning("跳过WFS板块（关键词未找到）")
+            boundaries['wfs'] = {'start': 0, 'end': 0}
+
+
+        # ===== 板块6：其他活动（可选）=====
+        other_keyword_y = keyword_map['other'].get('其他活动')
+
+        if other_keyword_y is not None:
+            logger.debug("计算板块6：其他活动")
+            other_start = other_keyword_y - OFFSET
+            other_end = footer_keyword_y - OFFSET  # 结束于footer关键词-80px
+
+            boundaries['other'] = {'start': other_start, 'end': other_end}
+            logger.debug(f"  other: Y={other_start}~{other_end}")
+        else:
+            logger.warning("跳过其他活动板块（关键词未找到）")
+            boundaries['other'] = {'start': 0, 'end': 0}
+
+
+        # ===== 板块7：尾部 =====
+        logger.debug("计算板块7：尾部")
+        footer_start = footer_keyword_y - OFFSET  # 起始于footer关键词-80px
+        footer_end = image_height  # 结束于图片底部
+
+        boundaries['footer'] = {'start': footer_start, 'end': footer_end}
+        logger.debug(f"  footer: Y={footer_start}~{footer_end}")
+
+        logger.info("板块边界计算完成（无需重叠调整，边界自然无缝衔接）")
+
+        return boundaries
+
+
+    def adjust_overlapping_boundaries(self, boundaries: Dict) -> Dict:
+        """调整重叠的边界（方案A：取中间值）.
+
+        检查相邻板块的边界是否重叠（即前一个板块的end > 后一个板块的start），
+        如果重叠，则将边界调整为中间值。
+
+        注意：跳过空的占位板块（start==end==0）
+
+        Args:
+            boundaries: 原始边界字典
+
+        Returns:
+            dict: 调整后的边界字典
+        """
+        # 板块顺序（从上到下）
+        sections = ['header', 'sales', 'refund', 'adjustment', 'wfs', 'other', 'footer']
+
+        # 遍历相邻板块
+        for i in range(len(sections) - 1):
+            current_section = sections[i]
+            next_section = sections[i + 1]
+
+            current_end = boundaries[current_section]['end']
+            next_start = boundaries[next_section]['start']
+
+            # 跳过空的占位板块
+            if (boundaries[current_section]['start'] == 0 and current_end == 0):
+                # 当前板块是占位板块，跳过
+                continue
+
+            if (next_start == 0 and boundaries[next_section]['end'] == 0):
+                # 下一个板块是占位板块，跳过
+                continue
+
+            # 检测重叠
+            if current_end > next_start:
+                # 计算中间值
+                mid_point = (current_end + next_start) // 2
+
+                logger.warning(
+                    f"检测到重叠：{current_section}结束({current_end}) > "
+                    f"{next_section}开始({next_start})，调整为中间值{mid_point}"
+                )
+
+                # 调整边界
+                boundaries[current_section]['end'] = mid_point
+                boundaries[next_section]['start'] = mid_point
+
+        return boundaries
+
+
+    # ========================================
+    # 6. 图像裁剪和保存功能
+    # ========================================
+
+    def crop_sections(
+        self,
+        left_image: np.ndarray,
+        boundaries: Dict,
+        output_dir: str,
+        filename_prefix: str
+    ) -> Dict[str, str]:
+        """根据边界裁剪板块图片.
+
+        Args:
+            left_image: 左侧图片（numpy数组）
+            boundaries: 板块边界字典
+            output_dir: 输出目录
+            filename_prefix: 文件名前缀（如"MP_12032024_page1"）
+
+        Returns:
+            dict: 保存的文件路径字典
+                {
+                    'header': 'path/to/header.png',
+                    'sales': 'path/to/sales.png',
+                    ...
+                }
+        """
+        logger.info("开始裁剪并保存板块图片")
+
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 板块名称映射
+        sections = ['header', 'sales', 'refund', 'adjustment', 'wfs', 'other', 'footer']
+
+        # 保存的文件路径
+        saved_files = {}
+
+        # 遍历每个板块
+        for section_key in sections:
+            # 获取边界
+            start_y = boundaries[section_key]['start']
+            end_y = boundaries[section_key]['end']
+
+            # 跳过空的占位板块（start==end==0表示该板块不存在）
+            if start_y == 0 and end_y == 0:
+                logger.warning(f"跳过空板块：{section_key}")
+                continue
+
+            # 边界检查（防止越界）
+            start_y = max(0, start_y)
+            end_y = min(left_image.shape[0], end_y)
+
+            # 裁剪（Y轴方向）
+            section_image = left_image[start_y:end_y, :]
+
+            # 生成输出文件名
+            output_filename = f"{filename_prefix}_{section_key}.png"
+            output_path = os.path.join(output_dir, output_filename)
+
+            # 保存图片
+            cv2.imwrite(output_path, section_image)
+
+            # 记录
+            saved_files[section_key] = output_path
+            logger.info(f"已保存板块：{output_filename} (Y: {start_y}~{end_y}, 高度: {end_y - start_y}px)")
+
+        logger.info(f"所有板块已保存到：{output_dir}")
+
+        return saved_files
+
+
+    # ========================================
+    # 7. 两阶段处理方法
+    # ========================================
+
+    def analyze_and_calculate_boundaries(
+        self,
+        image_path: str,
+        output_dir: Optional[str] = None,
+        save_json: bool = False,
+        save_visualization: bool = False
+    ) -> Dict[str, Any]:
+        """阶段1：分析图片并计算板块边界坐标.
+
+        此方法只负责OCR识别和坐标计算，不进行实际裁剪。
+        可以将计算结果保存为JSON文件，便于人工审核和调整。
+
+        Args:
+            image_path: 输入图片路径（PDF转换后的PNG）
+            output_dir: 输出目录（可选，用于保存JSON和可视化图片）
+            save_json: 是否保存边界坐标为JSON文件
+            save_visualization: 是否生成可视化标注图片
+
+        Returns:
+            dict: 分析结果
+                {
+                    'success': True/False,
+                    'image_path': '...',
+                    'image_width': 1234,
+                    'image_height': 5678,
+                    'left_image_width': 765,
+                    'keyword_map': {...},
+                    'boundaries': {
+                        'header': {'start': 0, 'end': 900},
+                        'sales': {'start': 950, 'end': 1850},
+                        ...
+                    },
+                    'line_height': 85,
+                    'json_path': '...' (if save_json=True),
+                    'visualization_path': '...' (if save_visualization=True),
+                    'error': None or error_message
+                }
+
+        Raises:
+            KeywordNotFoundError: 关键词识别失败
+            OCRError: OCR识别失败
+        """
+        try:
+            logger.info(f"========== 阶段1：分析图片并计算边界 ==========")
+            logger.info(f"输入图片: {image_path}")
+
+            # 提取文件名（不含扩展名）
+            filename = Path(image_path).stem
+
+            # 读取图片
+            logger.info("步骤1/4: 读取图片")
+            image = cv2.imread(image_path)
+            if image is None:
+                raise FileNotFoundError(f"无法读取图片: {image_path}")
+
+            image_height, image_width = image.shape[:2]
+            logger.info(f"图片尺寸: {image_width}×{image_height} 像素")
+
+            # 横向分割（62%）
+            logger.info("步骤2/4: 横向分割图片")
+            left_image, right_image = self.split_horizontal(image)
+            left_width = left_image.shape[1]
+
+            # OCR识别左侧图片
+            logger.info("步骤3/4: OCR识别左侧图片")
+            keyword_map, ocr_results = self.extract_keywords_positions(left_image)
+
+            # 计算行高
+            line_height = self.calculate_line_height(ocr_results)
+            logger.info(f"标准行高: {line_height}px")
+
+            # 计算板块边界
+            logger.info("步骤4/4: 计算板块边界")
+            left_height = left_image.shape[0]
+            boundaries = self.calculate_section_boundaries(keyword_map, line_height, left_height)
+
+            # 构建返回结果
+            result = {
+                'success': True,
+                'image_path': image_path,
+                'image_width': image_width,
+                'image_height': image_height,
+                'left_image_width': left_width,
+                'keyword_map': keyword_map,
+                'boundaries': boundaries,
+                'line_height': line_height,
+                'error': None
+            }
+
+            # 如果需要保存JSON
+            if save_json and output_dir:
+                json_path = self.save_boundaries_to_json(result, output_dir, filename)
+                result['json_path'] = json_path
+                logger.info(f"边界坐标已保存: {json_path}")
+
+            # 如果需要生成可视化图片
+            if save_visualization and output_dir:
+                vis_path = self.visualize_boundaries(left_image, keyword_map, boundaries, output_dir, filename)
+                result['visualization_path'] = vis_path
+                logger.info(f"可视化图片已保存: {vis_path}")
+
+            logger.info("========== 阶段1完成！ ==========")
+
+            return result
+
+        except KeywordNotFoundError as e:
+            logger.error(f"❌ 关键词识别失败：{e}")
+            return {
+                'success': False,
+                'error': f"关键词识别失败: {e}"
+            }
+
+        except OCRError as e:
+            logger.error(f"❌ OCR识别失败：{e}")
+            return {
+                'success': False,
+                'error': f"OCR识别失败: {e}"
+            }
+
+        except Exception as e:
+            logger.error(f"❌ 分析失败：{e}", exc_info=True)
+            return {
+                'success': False,
+                'error': f"分析失败: {e}"
+            }
+
+
+    def split_by_boundaries(
+        self,
+        image_path: str,
+        boundaries: Dict[str, Dict[str, int]],
+        output_dir: str,
+        split_ratio: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """阶段2：根据预计算的边界坐标裁剪图片.
+
+        此方法接收已经计算好的边界坐标，直接进行图片裁剪，
+        不再进行OCR识别和坐标计算。
+
+        Args:
+            image_path: 输入图片路径（PDF转换后的PNG）
+            boundaries: 预计算的边界坐标字典
+                {
+                    'header': {'start': 0, 'end': 900},
+                    'sales': {'start': 950, 'end': 1850},
+                    ...
+                }
+            output_dir: 输出目录
+            split_ratio: 横向分割比例（默认使用self.split_ratio=0.62）
+
+        Returns:
+            dict: 裁剪结果
+                {
+                    'success': True/False,
+                    'left_image_path': '...',
+                    'right_image_path': '...',
+                    'sections': {
+                        'header': '...',
+                        'sales': '...',
+                        ...
+                    },
+                    'error': None or error_message
+                }
+        """
+        try:
+            logger.info(f"========== 阶段2：按边界裁剪图片 ==========")
+            logger.info(f"输入图片: {image_path}")
+
+            # 提取文件名（不含扩展名）
+            filename = Path(image_path).stem
+
+            # 确保输出目录存在
+            os.makedirs(output_dir, exist_ok=True)
+
+            # 读取图片
+            logger.info("步骤1/3: 读取图片")
+            image = cv2.imread(image_path)
+            if image is None:
+                raise FileNotFoundError(f"无法读取图片: {image_path}")
+
+            logger.info(f"图片尺寸: {image.shape}")
+
+            # 横向分割（使用指定比例或默认比例）
+            logger.info("步骤2/3: 横向分割图片")
+            if split_ratio is not None:
+                original_ratio = self.split_ratio
+                self.split_ratio = split_ratio
+                left_image, right_image = self.split_horizontal(image)
+                self.split_ratio = original_ratio
+            else:
+                left_image, right_image = self.split_horizontal(image)
+
+            # 保存左右图片
+            left_image_path = os.path.join(output_dir, f"{filename}_left.png")
+            right_image_path = os.path.join(output_dir, f"{filename}_right.png")
+            cv2.imwrite(left_image_path, left_image)
+            cv2.imwrite(right_image_path, right_image)
+            logger.info(f"已保存左侧图片: {left_image_path}")
+            logger.info(f"已保存右侧图片: {right_image_path}")
+
+            # 裁剪板块
+            logger.info("步骤3/3: 按边界裁剪并保存板块")
+            section_files = self.crop_sections(left_image, boundaries, output_dir, filename)
+
+            logger.info("========== 阶段2完成！ ==========")
+
+            # 返回结果
+            return {
+                'success': True,
+                'left_image_path': left_image_path,
+                'right_image_path': right_image_path,
+                'sections': section_files,
+                'error': None
+            }
+
+        except Exception as e:
+            logger.error(f"❌ 裁剪失败：{e}", exc_info=True)
+            return {
+                'success': False,
+                'error': f"裁剪失败: {e}"
+            }
+
+
+    def save_boundaries_to_json(
+        self,
+        analysis_result: Dict[str, Any],
+        output_dir: str,
+        filename: str
+    ) -> str:
+        """保存边界坐标到JSON文件.
+
+        Args:
+            analysis_result: analyze_and_calculate_boundaries的返回结果
+            output_dir: 输出目录
+            filename: 文件名前缀
+
+        Returns:
+            str: JSON文件路径
+        """
+        import json
+        from datetime import datetime
+
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 构建JSON数据（只保留必要信息）
+        json_data = {
+            'metadata': {
+                'image_path': analysis_result['image_path'],
+                'image_width': analysis_result['image_width'],
+                'image_height': analysis_result['image_height'],
+                'left_image_width': analysis_result['left_image_width'],
+                'line_height': analysis_result['line_height'],
+                'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'version': 'v2.0'
+            },
+            'keyword_positions': analysis_result['keyword_map'],
+            'section_boundaries': analysis_result['boundaries']
+        }
+
+        # 保存JSON文件
+        json_path = os.path.join(output_dir, f"{filename}_boundaries.json")
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(json_data, f, ensure_ascii=False, indent=2)
+
+        return json_path
+
+
+    def load_boundaries_from_json(self, json_path: str) -> Dict[str, Dict[str, int]]:
+        """从JSON文件加载边界坐标.
+
+        Args:
+            json_path: JSON文件路径
+
+        Returns:
+            dict: 边界坐标字典
+        """
+        import json
+
+        with open(json_path, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+
+        return json_data['section_boundaries']
+
+
+    def visualize_boundaries(
+        self,
+        left_image: np.ndarray,
+        keyword_map: Dict,
+        boundaries: Dict,
+        output_dir: str,
+        filename: str
+    ) -> str:
+        """生成边界可视化图片.
+
+        在左侧图片上标注关键词位置和板块边界线，包含详细的坐标标注和图例。
+
+        Args:
+            left_image: 左侧图片（numpy数组）
+            keyword_map: 关键词位置映射
+            boundaries: 板块边界字典
+            output_dir: 输出目录
+            filename: 文件名前缀
+
+        Returns:
+            str: 可视化图片路径
+        """
+        # 复制图片（避免修改原图）
+        vis_image = left_image.copy()
+
+        # 定义颜色（BGR格式）
+        START_BOUNDARY_COLOR = (0, 255, 0)    # 绿色 - 板块起始边界
+        END_BOUNDARY_COLOR = (0, 180, 0)      # 深绿色 - 板块结束边界
+        KEYWORD_COLOR = (255, 0, 0)           # 蓝色 - 关键词位置
+        TOTAL_COLOR = (0, 0, 255)             # 红色 - 总计位置
+        TEXT_BG_COLOR = (255, 255, 255)       # 白色 - 文字背景
+        TEXT_COLOR = (0, 0, 0)                # 黑色 - 文字颜色
+
+        # 获取图片尺寸
+        height, width = vis_image.shape[:2]
+
+        # 1. 绘制关键词位置（先画，在底层）
+        for section, keywords in keyword_map.items():
+            if section == 'totals':
+                # 总计用红色标记
+                for y in keywords:
+                    cv2.line(vis_image, (0, y), (width, y), TOTAL_COLOR, 4)
+                    # 添加坐标标注（字体增大）
+                    cv2.putText(
+                        vis_image,
+                        f"Total Y={y}",
+                        (width - 400, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.2,  # 字体大小从0.6增大到1.2
+                        TOTAL_COLOR,
+                        3  # 线条粗细从2增加到3
+                    )
+            else:
+                # 其他关键词用蓝色标记
+                for keyword, y in keywords.items():
+                    cv2.line(vis_image, (0, y), (width, y), KEYWORD_COLOR, 4)  # 线条粗细从2增加到4
+                    # 添加关键词名称标注（字体增大）
+                    cv2.putText(
+                        vis_image,
+                        f"{keyword} Y={y}",
+                        (width - 500, y - 10),  # X坐标调整，Y坐标增加偏移
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.2,  # 字体大小从0.6增大到1.2
+                        KEYWORD_COLOR,
+                        3  # 线条粗细从2增加到3
+                    )
+
+        # 2. 绘制板块边界线
+        sections = ['header', 'sales', 'refund', 'adjustment', 'wfs', 'other', 'footer']
+        section_names_cn = {
+            'header': '头部',
+            'sales': '销售',
+            'refund': '退款',
+            'adjustment': '调整',
+            'wfs': 'WFS',
+            'other': '其他',
+            'footer': '尾部'
+        }
+
+        for section_key in sections:
+            start_y = boundaries[section_key]['start']
+            end_y = boundaries[section_key]['end']
+
+            # 跳过空板块
+            if start_y == 0 and end_y == 0:
+                continue
+
+            # 绘制起始线（绿色粗线，线条加粗）
+            cv2.line(vis_image, (0, start_y), (width, start_y), START_BOUNDARY_COLOR, 8)  # 线条粗细从5增加到8
+
+            # 绘制结束线（深绿色细线，线条加粗）
+            cv2.line(vis_image, (0, end_y), (width, end_y), END_BOUNDARY_COLOR, 4)  # 线条粗细从2增加到4
+
+            # 在左侧添加板块名称标签（带背景，字体增大）
+            cn_name = section_names_cn.get(section_key, section_key)
+            label_text = f"{cn_name} [{section_key}]"
+
+            # 计算文字尺寸（字体增大）
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label_text,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.5,  # 字体大小从0.8增大到1.5
+                3
+            )
+
+            # 绘制文字背景（白色矩形，增大尺寸）
+            cv2.rectangle(
+                vis_image,
+                (5, start_y + 5),
+                (15 + text_width, start_y + 15 + text_height),
+                TEXT_BG_COLOR,
+                -1  # 填充
+            )
+
+            # 绘制文字（字体增大）
+            cv2.putText(
+                vis_image,
+                label_text,
+                (10, start_y + 10 + text_height),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.5,  # 字体大小从0.8增大到1.5
+                START_BOUNDARY_COLOR,
+                3  # 线条粗细从2增加到3
+            )
+
+            # 在右侧标注起始Y坐标（字体增大）
+            cv2.putText(
+                vis_image,
+                f"Start: {start_y}",
+                (width - 350, start_y - 20),  # X坐标调整，Y坐标增加偏移
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.4,  # 字体大小从0.7增大到1.4
+                START_BOUNDARY_COLOR,
+                3  # 线条粗细从2增加到3
+            )
+
+            # 标注结束Y坐标（字体增大）
+            cv2.putText(
+                vis_image,
+                f"End: {end_y}",
+                (width - 350, end_y + 40),  # X坐标调整，Y坐标增加偏移
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.4,  # 字体大小从0.7增大到1.4
+                END_BOUNDARY_COLOR,
+                3  # 线条粗细从2增加到3
+            )
+
+        # 3. 在图片顶部添加图例（增大尺寸和字体）
+        legend_height = 250  # 图例高度从150增加到250
+        legend_bg = (240, 240, 240)  # 浅灰色背景
+
+        # 绘制图例背景
+        cv2.rectangle(vis_image, (0, 0), (width, legend_height), legend_bg, -1)
+
+        # 图例标题（字体增大）
+        cv2.putText(
+            vis_image,
+            "Legend / ",
+            (10, 50),  # Y坐标调整
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.5,  # 字体大小从0.8增大到1.5
+            TEXT_COLOR,
+            3  # 线条粗细从2增加到3
+        )
+
+        # 图例项（线条和字体都增大）
+        legend_items = [
+            (START_BOUNDARY_COLOR, 8, " (start)"),  # 线条粗细从5增加到8
+            (END_BOUNDARY_COLOR, 4, " (end)"),  # 线条粗细从2增加到4
+            (KEYWORD_COLOR, 4, " "),  # 线条粗细从2增加到4
+            (TOTAL_COLOR, 4, " \"\"")  # 线条粗细从2增加到4
+        ]
+
+        y_offset = 100  # Y偏移从60增加到100
+        for i, (color, thickness, desc) in enumerate(legend_items):
+            # 绘制示例线条（长度增加）
+            line_start_x = 10
+            line_end_x = 150  # 线条长度从80增加到150
+            cv2.line(vis_image, (line_start_x, y_offset), (line_end_x, y_offset), color, thickness)
+
+            # 添加说明文字（字体增大）
+            cv2.putText(
+                vis_image,
+                desc,
+                (line_end_x + 20, y_offset + 10),  # X和Y坐标调整
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.2,  # 字体大小从0.6增大到1.2
+                TEXT_COLOR,
+                2  # 线条粗细从1增加到2
+            )
+
+            y_offset += 40  # 行间距从25增加到40
+
+        # 保存可视化图片
+        os.makedirs(output_dir, exist_ok=True)
+        vis_path = os.path.join(output_dir, f"{filename}_boundaries_visualization.png")
+        cv2.imwrite(vis_path, vis_image)
+
+        return vis_path
+
+
+    # ========================================
+    # 8. 完整处理流程（兼容旧接口）
+    # ========================================
+
+    def process_image(
+        self,
+        image_path: str,
+        output_dir: str,
+        save_json: bool = False,
+        save_visualization: bool = False
+    ) -> Dict[str, Any]:
+        """处理单个PDF图片，进行板块分割（一站式方法）.
+
+        此方法内部调用两阶段处理方法：
+        - 阶段1：analyze_and_calculate_boundaries() 分析并计算边界
+        - 阶段2：split_by_boundaries() 按边界裁剪图片
+
+        完整流程：
+        1. 读取图片
+        2. 横向分割（62%）
+        3. OCR识别左侧图片
+        4. 计算行高
+        5. 计算板块边界
+        6. 裁剪并保存板块
+
+        Args:
+            image_path: 输入图片路径（PDF转换后的PNG）
+            output_dir: 输出目录
+            save_json: 是否保存边界坐标为JSON文件（默认False）
+            save_visualization: 是否生成可视化标注图片（默认False）
+
+        Returns:
+            dict: 处理结果
+                {
+                    'success': True/False,
+                    'left_image_path': '...',
+                    'right_image_path': '...',
+                    'sections': {
+                        'header': '...',
+                        'sales': '...',
+                        ...
+                    },
+                    'keyword_map': {...},
+                    'boundaries': {...},
+                    'line_height': 85,
+                    'json_path': '...' (if save_json=True),
+                    'visualization_path': '...' (if save_visualization=True),
+                    'error': None or error_message
+                }
+
+        Raises:
+            KeywordNotFoundError: 关键词识别失败
+            OCRError: OCR识别失败
+        """
+        logger.info(f"========== 开始一站式处理图片: {image_path} ==========")
+
+        # 阶段1：分析并计算边界
+        analysis_result = self.analyze_and_calculate_boundaries(
+            image_path,
+            output_dir=output_dir,
+            save_json=save_json,
+            save_visualization=save_visualization
+        )
+
+        # 检查阶段1是否成功
+        if not analysis_result['success']:
+            return analysis_result
+
+        # 阶段2：按边界裁剪图片
+        split_result = self.split_by_boundaries(
+            image_path,
+            analysis_result['boundaries'],
+            output_dir
+        )
+
+        # 检查阶段2是否成功
+        if not split_result['success']:
+            return split_result
+
+        # 合并两个阶段的结果
+        final_result = {
+            'success': True,
+            'left_image_path': split_result['left_image_path'],
+            'right_image_path': split_result['right_image_path'],
+            'sections': split_result['sections'],
+            'keyword_map': analysis_result['keyword_map'],
+            'boundaries': analysis_result['boundaries'],
+            'line_height': analysis_result['line_height'],
+            'error': None
+        }
+
+        # 如果有JSON和可视化文件，也添加到结果中
+        if 'json_path' in analysis_result:
+            final_result['json_path'] = analysis_result['json_path']
+
+        if 'visualization_path' in analysis_result:
+            final_result['visualization_path'] = analysis_result['visualization_path']
+
+        logger.info("========== 一站式处理完成！ ==========")
+
+        return final_result
+
+
+# ============================================================
+# 便捷函数
+# ============================================================
+
+def split_pdf_image(image_path: str, output_dir: str) -> Dict[str, Any]:
+    """便捷函数：处理单个PDF图片进行板块分割.
+
+    Args:
+        image_path: 输入图片路径
+        output_dir: 输出目录
+
+    Returns:
+        dict: 处理结果
+    """
+    splitter = ImageSplitter()
+    return splitter.process_image(image_path, output_dir)
+
+
+# ============================================================
+# 命令行测试入口
+# ============================================================
+
+if __name__ == "__main__":
+    # 测试代码
+    import sys
+
+    if len(sys.argv) < 2:
+        print("用法: python image_splitter.py <图片路径> [输出目录]")
+        print("示例: python image_splitter.py test_output/MP_12032024_page1.png test_output/")
+        sys.exit(1)
+
+    input_image = sys.argv[1]
+    output_directory = sys.argv[2] if len(sys.argv) > 2 else "test_output/"
+
+    # 配置日志
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # 执行分割
+    result = split_pdf_image(input_image, output_directory)
+
+    # 打印结果
+    if result['success']:
+        print("\n✅ 处理成功！")
+        print(f"左侧图片: {result['left_image_path']}")
+        print(f"右侧图片: {result['right_image_path']}")
+        print("\n板块文件:")
+        for section, path in result['sections'].items():
+            print(f"  {section}: {path}")
+    else:
+        print(f"\n❌ 处理失败: {result['error']}")
+        sys.exit(1)

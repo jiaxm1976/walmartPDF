@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>代码类型冲突检查列表</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #d32f2f;
+        }
+        .error-item {
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+            background-color: #ffebee;
+        }
+        .file-name {
+            font-weight: bold;
+            color: #d32f2f;
+            margin-bottom: 5px;
+        }
+        .line-info {
+            color: #555;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        .error-desc {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .code-block {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .severity-high { color: #d32f2f; font-weight: bold; }
+        .severity-medium { color: #ff9800; font-weight: bold; }
+        .severity-low { color: #ffca28; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>代码类型冲突检查列表</h1>
+        
+        <div class="error-item">
+            <div class="file-name">文件: backend/app/utils/text_formatter.py</div>
+            <div class="line-info">行号: 642</div>
+            <div class="error-desc">
+                <span class="severity-high">严重错误:</span> 函数返回类型注解不完整
+            </div>
+            <div class="code-block">
+                def merge_text_blocks(
+                    ocr_results: List[Tuple],
+                    y_tolerance: int = Y_TOLERANCE_DEFAULT
+                ) -> Tuple[str, List[]]:  # &lt;-- List[] 缺少类型参数
+            </div>
+            <div class="error-desc">
+                修复建议: 应该改为 -> Tuple[str, List[TextInfo]] 或 -> Tuple[str, List[Dict[str, Any]]]
+            </div>
+        </div>
+        
+        <div class="error-item">
+            <div class="file-name">文件: backend/app/utils/text_formatter.py</div>
+            <div class="line-info">行号: 784</div>
+            <div class="error-desc">
+                <span class="severity-high">严重错误:</span> 函数调用与定义不匹配
+            </div>
+            <div class="code-block">
+                text_infos=structured_data(output_lines)  # &lt;-- 调用时没有self参数
+            </div>
+            <div class="code-block">
+                def structured_data(self, text_lines: List[Dict[str, Any]]) -&gt; Dict[str, Any]:  # &lt;-- 定义时有self参数
+            </div>
+            <div class="error-desc">
+                修复建议: 移除函数定义中的self参数，使其成为普通函数
+            </div>
+        </div>
+        
+        <div class="error-item">
+            <div class="file-name">文件: backend/app/utils/text_formatter.py</div>
+            <div class="line-info">行号: 795</div>
+            <div class="error-desc">
+                <span class="severity-high">严重错误:</span> 函数返回类型与实际返回值不匹配
+            </div>
+            <div class="code-block">
+                def structured_data(self, text_lines: List[Dict[str, Any]]) -&gt; Dict[str, Any]:  # &lt;-- 声明返回字典
+                # ...
+                return structured_data  # &lt;-- 实际返回同名变量，但函数名被覆盖
+            </div>
+            <div class="error-desc">
+                修复建议: 重命名内部变量以避免与函数名冲突
+            </div>
+        </div>
+        
+        <div class="error-item">
+            <div class="file-name">文件: backend/app/services/left_image_processor_service.py</div>
+            <div class="line-info">行号: 155-196</div>
+            <div class="error-desc">
+                <span class="severity-high">严重错误:</span> 函数返回类型与实际返回值不匹配
+            </div>
+            <div class="code-block">
+                def merge_text_lines(self, ocr_results: List[Tuple], y_tolerance: int = 15) -&gt; List[Dict[str, Any]]:
+                    # ...
+                    merged_text, text_infos = merge_text_blocks(ocr_results, y_tolerance=y_tolerance)
+                    text_lines = merged_text  # &lt;-- 将字符串赋值给text_lines
+                    # ...
+                    return text_infos  # &lt;-- 但实际返回的是text_infos，类型可能不匹配
+            </div>
+            <div class="error-desc">
+                修复建议: 统一返回值类型，确保返回List[Dict[str, Any]]类型的字典列表
+            </div>
+        </div>
+        
+        <div class="error-item">
+            <div class="file-name">文件: backend/app/services/left_image_processor_service.py</div>
+            <div class="line-info">行号: 172</div>
+            <div class="error-desc">
+                <span class="severity-high">严重错误:</span> 变量赋值错误
+            </div>
+            <div class="code-block">
+                text_lines = merged_text  # &lt;-- 将字符串赋值给期望为List[Dict]的变量
+            </div>
+            <div class="error-desc">
+                修复建议: 正确处理merged_text，将其转换为List[Dict[str, Any]]格式
+            </div>
+        </div>
+        
+        <div class="error-item">
+            <div class="file-name">文件: backend/app/services/left_image_processor_service.py</div>
+            <div class="line-info">行号: 181</div>
+            <div class="error-desc">
+                <span class="severity-medium">中等错误:</span> 注释掉的代码块导致缩进错误
+            </div>
+            <div class="code-block">
+                #try:  # &lt;-- 注释掉的try导致后续代码缩进错误
+                    # 初始化结构化数据
+                    structured_data = {  # &lt;-- 这些代码有额外缩进
+                        "classdata": {
+                            "text_lines": text_lines,
+                            # ...
+                        },
+                        # ...
+                    }
+            </div>
+            <div class="error-desc">
+                修复建议: 取消注释try语句或调整缩进
+            </div>
+        </div>
+        
+        <div class="error-item">
+            <div class="file-name">文件: backend/app/utils/text_formatter.py</div>
+            <div class="line-info">行号: 736</div>
+            <div class="error-desc">
+                <span class="severity-medium">中等错误:</span> 变量名未定义
+            </div>
+            <div class="code-block">
+                def _find_payment_amount_block(text_info, amount_infos, processed_amounts, is_first=False):
+                    # ...
+                    if is_first:
+                        target_x = payment_block.left_bottom_x  # &lt;-- payment_block未定义
+                        target_y = payment_block.left_bottom_y + PAYMENT_OFFSET_Y  # &lt;-- payment_block未定义
+                    else:
+                        target_x = payment_block.center_x  # &lt;-- payment_block未定义
+                        target_y = payment_block.center_y  # &lt;-- payment_block未定义
+            </div>
+            <div class="error-desc">
+                修复建议: 应该使用参数text_info而不是未定义的payment_block
+            </div>
+        </div>
+        
+        <div class="error-item">
+            <div class="file-name">文件: backend/app/services/left_image_processor_service.py</div>
+            <div class="line-info">行号: 181</div>
+            <div class="error-desc">
+                <span class="severity-medium">中等错误:</span> extract_structured_data函数参数类型错误
+            </div>
+            <div class="code-block">
+                def extract_structured_data(self, text_lines: List[str]) -&gt; Dict[str, Any]:  # &lt;-- 声明接受List[str]
+                # 但实际期望接收List[Dict[str, Any]]
+            </div>
+            <div class="error-desc">
+                修复建议: 修改为text_lines: List[Dict[str, Any]]
+            </div>
+        </div>
+        
+        <div class="error-item">
+            <div class="file-name">文件: backend/app/services/left_image_processor_service.py</div>
+            <div class="line-info">行号: 195</div>
+            <div class="error-desc">
+                <span class="severity-low">低严重性:</span> 函数签名缺少右括号
+            </div>
+            <div class="code-block">
+                def extract_structured_data(self, text_lines: List[Dict[str, Any]]) -&gt; Dict[str, Any]:  # &lt;-- 这行是正确的
+                # 但在某些版本中可能缺少右括号导致语法错误
+            </div>
+            <div class="error-desc">
+                修复建议: 确保函数签名语法正确
+            </div>
+        </div>
+        
+        <div class="error-item">
+            <div class="file-name">文件: backend/app/utils/text_formatter.py</div>
+            <div class="line-info">行号: 639-787</div>
+            <div class="error-desc">
+                <span class="severity-medium">中等错误:</span> merge_text_blocks函数返回值与调用处期望不一致
+            </div>
+            <div class="code-block">
+                # merge_text_blocks返回 (str, List[TextInfo] 或其他类型)
+                # 但在left_image_processor_service.py中期望 (str, List[Dict[str, Any]])
+            </div>
+            <div class="error-desc">
+                修复建议: 统一返回值格式，确保与调用处期望一致
+            </div>
+        </div>
+        
+    </div>
+</body>
+</html>

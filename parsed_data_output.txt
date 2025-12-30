@@ -1,0 +1,87 @@
+2025-12-28 16:04:51,100 - __main__ - INFO - ============================================================
+2025-12-28 16:04:51,101 - __main__ - INFO - 开始运行parse_pdf_direct方法的全面测试
+2025-12-28 16:04:51,101 - __main__ - INFO - ============================================================
+2025-12-28 16:04:51,101 - backend.app.services.pdf_parser_service - INFO - 初始化PDF解析服务 (DPI=800)
+2025-12-28 16:04:51,101 - __main__ - INFO - === 测试开始: 2025-12-28 16:04:51.101119 ===
+2025-12-28 16:04:51,101 - __main__ - INFO - 1. 测试基本功能：解析PDF文件
+2025-12-28 16:04:51,101 - backend.app.services.pdf_parser_service - INFO - ============================================================
+2025-12-28 16:04:51,101 - backend.app.services.pdf_parser_service - INFO - 开始直接解析PDF: /Users/jiaxinming/JxmWork/walmart-a/backend/tests/test_data/20251218_190039_MP_01142025_statement_summary.pdf
+2025-12-28 16:04:51,101 - backend.app.services.pdf_parser_service - INFO - ============================================================
+2025-12-28 16:04:51,101 - backend.app.services.pdf_parser_service - INFO - Step 1: PDF转灰度图片...
+2025-12-28 16:04:51,108 - backend.app.utils.image_utils - INFO - 开始转换PDF: 20251218_190039_MP_01142025_statement_summary.pdf
+2025-12-28 16:04:51,108 - backend.app.utils.image_utils - INFO -   分辨率: 800 DPI
+2025-12-28 16:04:51,108 - backend.app.utils.image_utils - INFO -   灰度模式: 开启
+2025-12-28 16:04:54,017 - backend.app.utils.image_utils - INFO -   成功转换 2 页
+2025-12-28 16:04:54,464 - backend.app.services.pdf_parser_service - INFO -   ✓ 转换成功: (9355, 6615)
+2025-12-28 16:04:54,464 - backend.app.services.pdf_parser_service - INFO - Step 2: 横向分割左右侧...
+2025-12-28 16:04:54,464 - backend.app.services.keyword_locator - INFO - 创建新的OCR引擎实例
+2025-12-28 16:04:54,464 - backend.app.services.ocr_engine - INFO - ============================================================
+2025-12-28 16:04:54,464 - backend.app.services.ocr_engine - INFO - 初始化OCR引擎 (vision)
+2025-12-28 16:04:54,464 - backend.app.services.ocr_engine - INFO - ============================================================
+2025-12-28 16:04:54,801 - backend.app.services.ocr_engine - INFO - 置信度阈值: 0.25
+2025-12-28 16:04:54,802 - backend.app.services.ocr_engine - INFO - OCR引擎初始化成功
+2025-12-28 16:04:55,074 - backend.app.services.ocr_engine - INFO - 已加载坐标校准函数: /Users/jiaxinming/JxmWork/walmart-a/calibration_data/ocr_calibration_300dpi.pkl
+2025-12-28 16:04:55,074 - backend.app.services.keyword_locator - INFO - KeywordLocator初始化完成（v2.1）
+2025-12-28 16:04:55,074 - backend.app.services.keyword_locator - INFO - 横向分割：图片宽度=6615px, 分割位置=4167px (63%)
+2025-12-28 16:04:55,074 - backend.app.services.keyword_locator - INFO - 分割完成 - 左侧: (9355, 4167), 右侧: (9355, 2448)
+2025-12-28 16:04:55,074 - backend.app.services.pdf_parser_service - INFO -   ✓ 左侧图片: (9355, 4167)
+2025-12-28 16:04:55,074 - backend.app.services.pdf_parser_service - INFO -   ✓ 右侧图片: (9355, 2448)
+2025-12-28 16:04:55,074 - backend.app.services.pdf_parser_service - INFO - Step 3: 直接处理左侧板块...
+2025-12-28 16:04:55,074 - backend.app.services.left_image_processor_service - INFO - ============================================================
+2025-12-28 16:04:55,074 - backend.app.services.left_image_processor_service - INFO - 初始化左侧图片处理服务
+2025-12-28 16:04:55,074 - backend.app.services.left_image_processor_service - INFO - ============================================================
+2025-12-28 16:04:55,074 - backend.app.services.ocr_service - INFO - OCR服务初始化完成
+2025-12-28 16:04:55,074 - backend.app.services.left_image_processor_service - INFO - 将使用默认OCR服务引擎
+2025-12-28 16:04:55,074 - backend.app.services.left_image_processor_service - INFO - 左侧图片处理服务初始化完成
+2025-12-28 16:04:55,074 - backend.app.services.left_image_processor_service - INFO - ============================================================
+2025-12-28 16:04:55,074 - backend.app.services.left_image_processor_service - INFO - 开始处理左侧图片
+2025-12-28 16:04:55,074 - backend.app.services.left_image_processor_service - INFO - ============================================================
+2025-12-28 16:04:55,142 - backend.app.services.left_image_processor_service - INFO - 开始提取文本块
+2025-12-28 16:04:55,142 - backend.app.services.ocr_service - INFO - 首次调用,正在加载OCR引擎...
+2025-12-28 16:04:55,142 - backend.app.services.ocr_engine - INFO - ============================================================
+2025-12-28 16:04:55,142 - backend.app.services.ocr_engine - INFO - 初始化OCR引擎 (vision)
+2025-12-28 16:04:55,142 - backend.app.services.ocr_engine - INFO - ============================================================
+2025-12-28 16:04:55,142 - backend.app.services.ocr_engine - INFO - 置信度阈值: 0.25
+2025-12-28 16:04:55,142 - backend.app.services.ocr_engine - INFO - OCR引擎初始化成功
+2025-12-28 16:04:55,142 - backend.app.services.ocr_engine - INFO - 已加载坐标校准函数: /Users/jiaxinming/JxmWork/walmart-a/calibration_data/ocr_calibration_300dpi.pkl
+2025-12-28 16:04:55,142 - backend.app.services.ocr_service - INFO - OCR引擎加载成功
+2025-12-28 16:04:55,761 - backend.app.services.ocr_engine - INFO - Vision OCR识别完成，检测到 68 个文本块
+2025-12-28 16:04:55,763 - backend.app.services.left_image_processor_service - INFO - 成功提取 68 个文本块
+2025-12-28 16:04:55,764 - backend.app.services.left_image_processor_service - INFO - 开始合并文本行，Y坐标容差: 15
+2025-12-28 16:04:55,764 - backend.app.utils.text_formatter - INFO - 找到'向您支付的金额'对应的金额: 0.00美元
+2025-12-28 16:04:55,764 - backend.app.utils.text_formatter - ERROR - 文本块合并失败: structured_data() missing 1 required positional argument: 'text_lines'
+Traceback (most recent call last):
+  File "/Users/jiaxinming/JxmWork/walmart-a/backend/app/utils/text_formatter.py", line 784, in merge_text_blocks
+    text_infos=structured_data(result_text)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: structured_data() missing 1 required positional argument: 'text_lines'
+2025-12-28 16:04:55,764 - backend.app.services.left_image_processor_service - INFO - 成功merged_text合并为  行文本
+2025-12-28 16:04:55,764 - backend.app.services.left_image_processor_service - INFO - 成功合并为 0 行文本
+2025-12-28 16:04:55,764 - backend.app.services.left_image_processor_service - INFO - 合并文本行 [] 
+2025-12-28 16:04:55,765 - backend.app.services.left_image_processor_service - INFO - 开始提取结构化数据
+2025-12-28 16:04:55,765 - backend.app.services.left_image_processor_service - INFO - 提取结structured_data构化数据 {'classdata': {'text_lines': [], 'key_value_pairs': {}, 'category_details': []}, 'metadata': {'line_count': 0, 'category_count': 0, 'detail_count': 0, 'processing_time': '2025-12-28 16:04:55'}} 
+2025-12-28 16:04:55,765 - backend.app.services.left_image_processor_service - INFO - 左侧图片处理完成
+2025-12-28 16:04:55,765 - backend.app.services.left_image_processor_service - INFO - ============================================================
+2025-12-28 16:04:55,765 - backend.app.services.pdf_parser_service - ERROR - ============================================================
+2025-12-28 16:04:55,765 - backend.app.services.pdf_parser_service - ERROR - ❌ PDF直接解析失败: 'text_lines'
+2025-12-28 16:04:55,765 - backend.app.services.pdf_parser_service - ERROR - ============================================================
+Traceback (most recent call last):
+  File "/Users/jiaxinming/JxmWork/walmart-a/backend/app/services/pdf_parser_service.py", line 113, in parse_pdf_direct
+    logger.info(f"  ✓ 提取到 {len(left_data['text_lines'])} 行文本")
+                                  ~~~~~~~~~^^^^^^^^^^^^^^
+KeyError: 'text_lines'
+2025-12-28 16:04:55,765 - __main__ - INFO - 【完整result_data数据】
+2025-12-28 16:04:55,765 - __main__ - INFO - null
+2025-12-28 16:04:55,765 - __main__ - INFO - 
+2025-12-28 16:04:55,765 - __main__ - ERROR - ============================================================
+2025-12-28 16:04:55,765 - __main__ - ERROR - ❌ 测试失败: 解析失败: 'text_lines'
+2025-12-28 16:04:55,765 - __main__ - ERROR - ============================================================
+Traceback (most recent call last):
+  File "/Users/jiaxinming/JxmWork/walmart-a/backend/tests/integration/test_parse_pdf_direct.py", line 293, in <module>
+    result = test.test_parse_pdf_direct_basic_functionality()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jiaxinming/JxmWork/walmart-a/backend/tests/integration/test_parse_pdf_direct.py", line 92, in test_parse_pdf_direct_basic_functionality
+    assert result["success"] is True, f"解析失败: {result.get('error')}"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 解析失败: 'text_lines'
+2025-12-28 16:04:55,766 - __main__ - INFO - === 测试结束: 2025-12-28 16:04:55.766328, 总耗时: 4.67秒 ===

@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF解析与数据库数据对比报告</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+            border-left: 5px solid #007BFF;
+            padding-left: 10px;
+        }
+        h3 {
+            color: #666;
+            margin-top: 20px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .table-container {
+            overflow-x: auto;
+            margin: 15px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        .match {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .mismatch {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .missing_in_db {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .missing_in_parsed {
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+        .field-name {
+            font-weight: bold;
+            background-color: #f8f9fa;
+        }
+        .json-data {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .validation-issues {
+            background-color: #fff3cd;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+        .section-content {
+            display: none;
+            margin-top: 10px;
+        }
+        .section-content.expanded {
+            display: block;
+        }
+        .toggle-icon {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .summary {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #e9ecef;
+            border-radius: 5px;
+        }
+        .summary-item {
+            text-align: center;
+            padding: 10px;
+        }
+        .summary-count {
+            font-size: 24px;
+            font-weight: bold;
+        }
+    </style>
+    <script>
+        function toggleSection(sectionId) {
+            const content = document.getElementById(sectionId);
+            const icon = content.previousElementSibling.querySelector('.toggle-icon');
+            if (content.classList.contains('expanded')) {
+                content.classList.remove('expanded');
+                icon.textContent = '+';
+            } else {
+                content.classList.add('expanded');
+                icon.textContent = '-';
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>PDF解析与数据库数据对比报告</h1>
+        <p>生成时间: 2025-12-24 10:54:59</p>
+        
+        <!-- 摘要 -->
+        <div class="summary">
+            <div class="summary-item">
+                <div class="summary-count" id="total-fields">0</div>
+                <div>总字段数</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-count match" id="match-fields">0</div>
+                <div>匹配字段</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-count mismatch" id="mismatch-fields">0</div>
+                <div>不匹配字段</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-count missing_in_db" id="missing-in-db">0</div>
+                <div>DB缺失字段</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-count missing_in_parsed" id="missing-in-parsed">0</div>
+                <div>解析缺失字段</div>
+            </div>
+        </div>
+
+        <!-- 原始解析JSON数据 -->
+        <div class="section">
+            <div class="section-header" onclick="toggleSection('original-json-content')">
+                <h2>📄 原始PDF解析JSON数据</h2>
+                <span class="toggle-icon">+</span>
+            </div>
+            <div id="original-json-content" class="section-content">
+                <div class="json-data">{
+  "left_section": {
+    "header": {
+      "开始日期": "2024年12月6日",
+      "结束日期": "2025年1月11日",
+      "期初余额": "-122.56",
+      "备用金": "0.00",
+      "回款等待": "0.00"
+    },
+    "sales": {
+      "产品价格": "1355.89",
+      "运输": "13.98",
+      "WFS运输退款": "-13.98",
+      "已收税净额": "92.92",
+      "净佣金": "-195.44",
+      "扣缴税款净额": "-91.91",
+      "WFS 运输税退款": "-1.01",
+      "T沃尔玛出资的节余": "0.00",
+      "总计：": "1160.45"
+    },
+    "refund": {
+      "产品价格": "-65.55",
+      "运输": "0.00",
+      "已收税净额": "-3.26",
+      "佣金": "4.88",
+      "扣缴税款净额": "3.26",
+      "T沃尔玛出资的节余": "0.00",
+      "总计": "-60.67"
+    },
+    "adjustment": {
+      "退货沃尔玛运输服务费": "-17.50",
+      "沃尔玛全球运输标签服务费": "-216.68",
+      "总计": "-234.18"
+    },
+    "wfs": {
+      "沃尔玛商品服务（WFS）": "-171.15",
+      "WFS 以太坊费": "-3.85",
+      "WFS 总折扣": "0.00",
+      "总计：": "-175.00"
+    },
+    "other": {
+      "沃尔玛产品广告": "-568.04",
+      "总计：": "-568.04"
+    },
+    "footer": {
+      "期末余额": "0.00",
+      "向您支付的金额": "0.00"
+    }
+  },
+  "right_section": {
+    "payment_details": {
+      "状态": "不予付款",
+      "付款日期": "2025年1月14日（太平洋夏令时）",
+      "周期付款": "每周",
+      "付款方式": "pingpong",
+      "设备方式": "曰信用卡",
+      "待付款金额": "0.00美元",
+      "等待回款金额": "① 0.00美元",
+      "回款等待期": "①"
+    }
+  }
+}</div>
+            </div>
+        </div>
+
+        <!-- 验证问题 -->
+        {% if validation_results %}
+        <div class="section">
+            <h2>⚠️ 校验问题</h2>
+            <div class="validation-issues">
+                <p><strong>sales:</strong> 板块 'sales' 总计校验失败: 实际总计=0.00, 计算总和=1161.46, 差异=1161.46</p>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 详细对比 -->
+        <div class="section">
+            <h2>🔍 字段级详细对比</h2>
+            
+            <!-- Header对比 -->
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('header-content')">
+                    <h3>📋 头部信息 (StatementHeader)</h3>
+                    <span class="toggle-icon">+</span>
+                </div>
+                <div id="header-content" class="section-content">
+                    <div class="table-container">
+                        <table><tr><th>字段名称</th><th>PDF解析值</th><th>数据库保存值</th></tr><tr><td class='field-name'>awaiting_payment</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>created_at</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>2025-12-24 10:47:14.559864</td></tr><tr><td class='field-name'>end_date</td><td class='match'>2025-01-11</td><td class='match'>2025-01-11</td></tr><tr><td class='field-name'>id</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>1</td></tr><tr><td class='field-name'>opening_balance</td><td class='mismatch'>-122.56</td><td class='mismatch'>-122.56</td></tr><tr><td class='field-name'>pdf_file_id</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>1</td></tr><tr><td class='field-name'>reserve_funds</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>start_date</td><td class='match'>2024-12-06</td><td class='match'>2024-12-06</td></tr><tr><td class='field-name'>updated_at</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>2025-12-24 10:47:14.559865</td></tr></table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sales对比 -->
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('sales-content')">
+                    <h3>💰 销售信息 (SalesDetail)</h3>
+                    <span class="toggle-icon">+</span>
+                </div>
+                <div id="sales-content" class="section-content">
+                    <div class="table-container">
+                        <table><tr><th>字段名称</th><th>PDF解析值</th><th>数据库保存值</th></tr><tr><td class='field-name'>created_at</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>2025-12-24 10:47:14.559556</td></tr><tr><td class='field-name'>id</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>1</td></tr><tr><td class='field-name'>net_commission</td><td class='mismatch'>-195.44</td><td class='mismatch'>-195.44</td></tr><tr><td class='field-name'>net_tax_collected</td><td class='mismatch'>92.92</td><td class='mismatch'>92.92</td></tr><tr><td class='field-name'>other_total</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>pdf_file_id</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>1</td></tr><tr><td class='field-name'>product_price</td><td class='mismatch'>1355.89</td><td class='mismatch'>1355.89</td></tr><tr><td class='field-name'>shipping</td><td class='mismatch'>13.98</td><td class='mismatch'>13.98</td></tr><tr><td class='field-name'>total</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>updated_at</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>2025-12-24 10:47:14.559558</td></tr><tr><td class='field-name'>walmart_funded_savings</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>wfs_shipping_refund</td><td class='mismatch'>-13.98</td><td class='mismatch'>-13.98</td></tr><tr><td class='field-name'>wfs_shipping_tax_refund</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>withholding_tax</td><td class='mismatch'>-91.91</td><td class='mismatch'>-91.91</td></tr></table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Refund对比 -->
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('refund-content')">
+                    <h3>🔄 退款信息 (RefundDetail)</h3>
+                    <span class="toggle-icon">+</span>
+                </div>
+                <div id="refund-content" class="section-content">
+                    <div class="table-container">
+                        <table><tr><th>字段名称</th><th>PDF解析值</th><th>数据库保存值</th></tr><tr><td class='field-name'>commission</td><td class='mismatch'>4.88</td><td class='mismatch'>4.88</td></tr><tr><td class='field-name'>created_at</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>2025-12-24 10:47:14.559314</td></tr><tr><td class='field-name'>id</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>1</td></tr><tr><td class='field-name'>net_tax_collected</td><td class='mismatch'>-3.26</td><td class='mismatch'>-3.26</td></tr><tr><td class='field-name'>other_total</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>pdf_file_id</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>1</td></tr><tr><td class='field-name'>product_price</td><td class='mismatch'>-65.55</td><td class='mismatch'>-65.55</td></tr><tr><td class='field-name'>shipping</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>total</td><td class='mismatch'>-60.67</td><td class='mismatch'>-60.67</td></tr><tr><td class='field-name'>updated_at</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>2025-12-24 10:47:14.559315</td></tr><tr><td class='field-name'>walmart_funded_savings</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>withholding_tax</td><td class='mismatch'>3.26</td><td class='mismatch'>3.26</td></tr></table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Payment对比 -->
+            <div class="section">
+                <div class="section-header" onclick="toggleSection('payment-content')">
+                    <h3>💳 支付信息 (PaymentDetail)</h3>
+                    <span class="toggle-icon">+</span>
+                </div>
+                <div id="payment-content" class="section-content">
+                    <div class="table-container">
+                        <table><tr><th>字段名称</th><th>PDF解析值</th><th>数据库保存值</th></tr><tr><td class='field-name'>amount_to_be_paid</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>amount_waiting_return</td><td class='match'>0.00</td><td class='match'>0.0</td></tr><tr><td class='field-name'>created_at</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>2025-12-24 10:47:14.558857</td></tr><tr><td class='field-name'>device_method</td><td class='match'>曰信用卡</td><td class='match'>曰信用卡</td></tr><tr><td class='field-name'>id</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>1</td></tr><tr><td class='field-name'>other_total</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>0.0</td></tr><tr><td class='field-name'>payment_date</td><td class='match'>2025-01-14</td><td class='match'>2025-01-14</td></tr><tr><td class='field-name'>payment_frequency</td><td class='match'>每周</td><td class='match'>每周</td></tr><tr><td class='field-name'>payment_method</td><td class='match'>pingpong</td><td class='match'>pingpong</td></tr><tr><td class='field-name'>pdf_file_id</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>1</td></tr><tr><td class='field-name'>return_waiting_period</td><td class='match'>①</td><td class='match'>①</td></tr><tr><td class='field-name'>status</td><td class='match'>不予付款</td><td class='match'>不予付款</td></tr><tr><td class='field-name'>updated_at</td><td class='missing_in_parsed'><em>缺失</em></td><td class='missing_in_parsed'>2025-12-24 10:47:14.558859</td></tr><tr><td class='field-name'>warning_message</td><td class='match'>None</td><td class='match'>None</td></tr></table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
