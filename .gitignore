@@ -1,3 +1,5 @@
+# 忽略大于100M的目录
+frontend/
 # 虚拟环境
 venv/
 env/
