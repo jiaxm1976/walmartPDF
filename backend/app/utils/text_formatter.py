@@ -724,23 +724,16 @@ def merge_text_blocks(
 
         # ===== 步骤6：遍历text_infos进行Y坐标匹配（核心行合并） =====
         merged_lines = []  # 存储合并后的行数据
-        class_id='header'
         for text_info in text_infos_sorted:
-            # 创建行数据
             line_data = [text_info]
-            line_data.append(class_id)
-            if "," not in line and i>2:
             if text_info.text.strip() == "向您支付的金额" and text_info.center_y < PAYMENT_AMOUNT_Y_THRESHOLD:
-                # 特殊处理："向您支付的金额"及其对应金额
                 payment_text_info, payment_amount_info = _process_payment_amount(text_info, amount_infos, processed_amounts)
                 if payment_amount_info:
                     line_data.append(payment_amount_info)
             else:
-                # 普通文本块：查找匹配金额
                 matched_amount = _get_matching_amount(text_info, amount_infos, processed_amounts, y_tolerance)
                 if matched_amount:
                     line_data.append(matched_amount)
-
             merged_lines.append(line_data)
 
 
@@ -859,7 +852,7 @@ def parse_category_data(data: List[Any], default_category: str = 'header') -> Li
     return result
 
 
-def jg_structured_data(text_lines: List[str]) -> List[str，Dict[str, Any]]:
+def jg_structured_data(text_lines: List[str]) -> Dict[str, Any]:
         """从文本行中提取结构化数据.
         
         基于文本内容和格式，提取关键字和对应的值，形成结构化数据.
@@ -874,80 +867,59 @@ def jg_structured_data(text_lines: List[str]) -> List[str，Dict[str, Any]]:
         logger.info("开始提取结构化数据")
         
         try:
-        #     # 初始化结构化数据
-        #     structured_data = {
-        #         "classdata": {
-        #             "text_lines": text_lines,
-        #             "key_value_pairs": {},
-        #             "category_details": []  # 存储最终的类别+明细
-        #         },
-        #         "metadata": {
-        #             "line_count": len(text_lines),
-        #             "category_count": 0,
-        #             "detail_count": 0,
-        #             "processing_time": time.strftime("%Y-%m-%d %H:%M:%S")
-        #         }
-        #     }
+            # 初始化结构化数据
+            structured_data = {
+                "classdata": {
+                    "text_lines": text_lines,
+                    "category_details": []
+                },
+                "metadata": {
+                    "line_count": len(text_lines),
+                    "category_count": 0,
+                    "detail_count": 0,
+                    "processing_time": time.strftime("%Y-%m-%d %H:%M:%S")
+                }
+            }
 
-            # 核心解析逻辑
-            structured_data=[]  #返回合并的数据
-            current_category = "header"  # 临时存储当前类别名
-            current_details = []   # 临时存储当前类别的明细
-
-            for i, line_dict in enumerate(text_lines, start=1):
-                line = line_dict    #["text"]  # 从字典中获取文本内容
-                
-                # ---- 判断1：是【类别行】（纯字符串，无逗号） ----
-                if "," not in line and i>2:
-                    # 如果不是第一个类别，先把上一个类别的数据存入结构体
-                    if current_category and current_details:
-                        structured_data["classdata"]["category_details"].append({
-                            "类别名称": current_category,
-                            "明细列表": current_details
-                        })
-                    # 切换为新的类别
-                    current_category = line
-                    current_details = []  # 清空明细，准备存新类别的数据
-                # ---- 判断2：是【明细行】（有逗号，字段名+金额） ----
-                else:
-                    if "向您支付的金额" in line.strip() and i>15:
-                        # 如果不是第一个类别，先把上一个类别的数据存入结构体
-                        if current_category and current_details:
+            current_category = None
+            current_details = []
+            for i, line in enumerate(text_lines, start=1):
+                # 首行或遇到新类别行（无逗号）
+                if "," not in line:
+                    # 首次遇到类别
+                    if current_category is None:
+                        current_category = line
+                        current_details = []
+                    else:
+                        # 切换类别，保存上一个类别
+                        if current_details:
                             structured_data["classdata"]["category_details"].append({
                                 "类别名称": current_category,
                                 "明细列表": current_details
                             })
-                        # 切换为新的类别
-                        current_category = "footer"
-                        current_details = []  # 清空明细，准备存新类别的数
-                    else:
-                        # 解析明细行：剔除单引号 + 分割字段名和金额
+                        current_category = line
+                        current_details = []
+                else:
+                    try:
                         field_name, amount_str = line.replace("'", "").split(",")
-                        # 金额转数值类型(float)，并去除首尾空格（防止格式不规范）
                         amount = float(amount_str.strip())
-                        # 把解析后的明细存入临时列表
                         current_details.append({
                             "字段名": field_name.strip(),
                             "金额": amount
                         })
-
-            # ---- 处理最后一个类别的数据（循环结束后，最后一个类别还没存入） ----
+                    except Exception:
+                        continue
+            # 处理最后一个类别
             if current_category and current_details:
                 structured_data["classdata"]["category_details"].append({
                     "类别名称": current_category,
                     "明细列表": current_details
                 })
-
-            # ========== 4. 自动更新元数据统计信息 ==========
             structured_data["metadata"]["category_count"] = len(structured_data["classdata"]["category_details"])
-            # 统计所有明细的总行数
             total_detail = sum(len(item["明细列表"]) for item in structured_data["classdata"]["category_details"])
             structured_data["metadata"]["detail_count"] = total_detail
-                    
-            #logger.info(f"成功提取 {len(structured_data['key_value_pairs'])} 个键值对")
             return structured_data
         except Exception as e:
             logger.error(f"提取结构化数据失败: {e}")
-            # 返回部分数据，而不是空字典
             return structured_data
 

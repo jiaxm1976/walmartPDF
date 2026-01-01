@@ -337,7 +337,7 @@ class LeftImageProcessorService:
             
             # 3. 格式化文本块
             formatted_results = self.format_text_blocks(ocr_results)
-            #logger.info(f"格式化文本块 {formatted_results} ")
+            logger.info(f"格式化文本块 {formatted_results} ")
             
             # 4. 合并文本行
             text_lines = self.merge_text_lines(formatted_results)
