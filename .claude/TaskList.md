@@ -1,257 +1,82 @@
-# Walmart PDF解析系统 - 项目任务清单
 
-> **版本**: v1.0 | **创建时间**: 2025-12-19 | **维护者**: 项目团队
-
----
-
-## 一、项目情况说明
-
-### 1.1 项目概述
-**自动化处理沃尔玛市场（Walmart Marketplace）财务对账单的PDF报表识别和数据分析系统**
-
-### 1.2 核心能力
-- PDF自动解析（pdfplumber + PyMuPDF）
-- OCR文字识别（Apple Vision Framework）
-- 智能图像分割（OpenCV横线检测）
-- 数据结构化提取（7个财务板块）
-- RESTful API服务（FastAPI）
-- 数据库存储（SQLite/MySQL/PostgreSQL）
-- 数据查询和修改（Web API）
-- 数据导出（Excel/CSV/JSON）
-
-### 1.3 环境信息
-- **开发语言**: Python 3.11.9
-- **数据库**: SQLite（开发）/ MySQL（生产）
-- **虚拟环境**: venv
-- **项目路径**: `/Users/jiaxinming/JxmWork/walmart-a/`
-- **数据库文件**: `walmart_pdf_parser.db`
-- **依赖管理**: pip + requirements.txt
+# Walmart PDF解析系统 - 任务清单（版本分阶段）
 
 ---
+## 项目概览
 
-## 二、技术架构
-
-### 2.1 技术栈
-
-#### 后端框架
-- **FastAPI** 0.104.1 - 异步Web框架
-- **Uvicorn** 0.24.0 - ASGI服务器
-- **SQLAlchemy** 2.0.23 - ORM框架
-- **Pydantic** 2.5.2 - 数据验证
-
-#### PDF处理
-- **pdfplumber** 0.10.3 - PDF文本提取
-- **PyMuPDF** (fitz) - PDF转图片
-- **Pillow** - 图像处理
-
-#### OCR识别
-- **Apple Vision Framework** - 主OCR引擎（macOS）
-- **PaddleOCR** - 备用OCR引擎
-- **OpenCV** - 图像预处理和分割
-
-#### 数据存储
-- **SQLite** - 开发环境数据库
-- **MySQL/PostgreSQL** - 生产环境支持
-- **PyMySQL** - MySQL驱动
-
-### 2.2 系统架构图
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                   Client（客户端）                       │
-│              cURL / Postman / Web前端                    │
-└────────────────────────┬────────────────────────────────┘
-                         │ HTTP/HTTPS
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│              API Layer（API接口层）                      │
-│  ┌─────────────────┬──────────────────────────────────┐ │
-│  │  /pdfs/*        │  /statements/*                   │ │
-│  │  PDF文件管理    │  对账单数据管理                  │ │
-│  │  - 上传         │  - 查询完整数据                  │ │
-│  │  - 查询         │  - 更新板块数据                  │ │
-│  │  - 删除         │  - 数据验证                      │ │
-│  │  - 触发解析     │  - 数据导出                      │ │
-│  └─────────────────┴──────────────────────────────────┘ │
-│                    FastAPI Router                        │
-└────────────────────────┬────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│            Service Layer（业务逻辑层）                   │
-│  ┌──────────────────┬──────────────────────────────────┐│
-│  │ pdf_parser_      │ keyword_extractor.py             ││
-│  │ service.py       │ 关键词提取服务                    ││
-│  │ PDF解析服务      │ - 7个板块关键词识别               ││
-│  │ - 调用PDF解析器  │ - 板块范围计算                    ││
-│  │ - 调用OCR引擎    │ - Footer过滤                      ││
-│  │ - 数据结构化     │                                   ││
-│  └──────────────────┴──────────────────────────────────┘│
-│  ┌──────────────────┬──────────────────────────────────┐│
-│  │ ocr_engine.py    │ pdf_parser.py                    ││
-│  │ OCR识别引擎      │ PDF解析器                         ││
-│  │ - Vision OCR集成 │ - PDF转图片                       ││
-│  │ - 坐标校准       │ - pdfplumber提取                  ││
-│  │ - 置信度过滤     │ - 图像分割                        ││
-│  └──────────────────┴──────────────────────────────────┘│
-└────────────────────────┬────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│             CRUD Layer（数据访问层）                     │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │ pdf_file.py (584行)                                 ││
-│  │ - create_pdf_file()         创建PDF记录             ││
-│  │ - get_pdf_files()           分页查询PDF列表         ││
-│  │ - update_pdf_file_status()  更新处理状态            ││
-│  │ - create_statement_header() 创建对账单头部          ││
-│  │ - get_complete_statement_data() 获取完整数据        ││
-│  │ - update_complete_statement_data() 更新完整数据     ││
-│  └─────────────────────────────────────────────────────┘│
-└────────────────────────┬────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│              ORM Layer（对象关系映射层）                 │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │ models.py (10个表)                                  ││
-│  │ - PDFFile                   PDF文件表               ││
-│  │ - StatementHeader           对账单头部              ││
-│  │ - SalesDetail               销售明细                ││
-│  │ - RefundDetail              退款明细                ││
-│  │ - AdjustmentDetail          调整明细                ││
-│  │ - WFSDetail                 WFS服务明细             ││
-│  │ - OtherActivityDetail       其他活动明细            ││
-│  │ - StatementFooter           对账单尾部              ││
-│  │ - PaymentDetail             付款详情                ││
-│  │ - DynamicField              动态字段扩展            ││
-│  └─────────────────────────────────────────────────────┘│
-│                    SQLAlchemy ORM                        │
-└────────────────────────┬────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│          Database（数据库层）                            │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │ SQLite (开发)                                       ││
-│  │ MySQL/PostgreSQL (生产)                             ││
-│  │                                                     ││
-│  │ walmart_pdf_parser.db                               ││
-│  └─────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────┘
-```
-
-### 2.3 目录结构
-
-```
-walmart-a/                              # 项目根目录
-│
-├── .claude/                            # Claude配置目录
-│   ├── CLAUDE.md                       # 主配置文件
-│   ├── CORE.md                         # 开发规范
-│   ├── TaskList.md                     # 本文件（项目任务清单）
-│   ├── specs/                          # 技术规范文档
-│   │   ├── ocr-guide.md               # OCR技术指南
-│   │   ├── db-design.md               # 数据库设计文档
-│   │   └── performance.md             # 性能优化指南
-│   └── context/                        # 工作上下文记录
-│       ├── current-sprint.md          # 当前冲刺计划
-│       ├── known-issues.md            # 已知问题列表
-│       └── phase*-*.md                # 各Phase工作记录
-│
-├── backend/                            # 后端代码目录
-│   ├── main.py                         # FastAPI主应用入口
-│   │
-│   ├── database/                       # 数据库配置和模型
-│   │   ├── config.py                   # 数据库连接配置
-│   │   ├── models.py                   # SQLAlchemy ORM模型（10个表）
-│   │   └── schema.sql                  # SQL建表语句
-│   │
-│   ├── app/                            # 应用核心代码
-│   │   ├── config.py                   # 应用配置
-│   │   │
-│   │   ├── services/                   # 业务逻辑层
-│   │   │   ├── ocr_engine.py           # OCR识别引擎（555行）
-│   │   │   ├── pdf_parser.py           # PDF解析器（861行）
-│   │   │   ├── pdf_parser_service.py   # PDF解析服务（420行）
-│   │   │   ├── image_splitter.py       # 图像分割器
-│   │   │   ├── keyword_extractor.py    # 关键词提取（65行）
-│   │   │   ├── direct_keyword_extractor.py  # 直接关键词提取
-│   │   │   ├── section_splitter.py     # 区块分割器
-│   │   │   └── pdf_section_splitter.py # PDF区块处理
-│   │   │
-│   │   ├── schemas/                    # Pydantic数据模型
-│   │   │   └── pdf_file.py             # API数据模型（270行）
-│   │   │
-│   │   ├── crud/                       # 数据库CRUD操作
-│   │   │   └── pdf_file.py             # PDF和对账单CRUD（584行）
-│   │   │
-│   │   └── api/v1/                     # API接口（版本1）
-│   │       ├── __init__.py             # 路由注册
-│   │       ├── pdfs.py                 # PDF管理接口（460行）
-│   │       └── statements.py           # 对账单数据接口（270行）
-│   │
-│   ├── tests/                          # 测试代码目录
-│   │   ├── unit/                       # 单元测试
-│   │   ├── integration/                # 集成测试
-│   │   ├── fixtures/                   # 测试fixtures
-│   │   └── test_data/                  # 测试数据
-│   │       └── sample_pdfs/            # 测试PDF文件
-│   │
-│   └── requirements.txt                # Python依赖清单
-│
-├── scripts/                            # 工具脚本目录
-│   ├── init_database.py                # 数据库初始化脚本
-│   ├── verify_database.py              # 数据库验证脚本
-│   ├── test_parse_pipeline.py          # 完整流程测试脚本
-│   ├── batch_test_direct_extraction.py # 批量测试脚本
-│   ├── create_calibration.py           # OCR坐标校准生成
-│   ├── quick_visualize.py              # OCR可视化工具
-│   └── test/                           # 测试相关
-│       ├── test-code/                  # 测试代码
-│       ├── test-output/                # 测试输出
-│       └── test-md/                    # 测试文档
-│
-├── calibration_data/                   # OCR校准数据目录
-│   └── ocr_calibration_300dpi.pkl      # 300DPI坐标校准文件
-│
-├── PdfData/                            # 测试PDF样本目录（6个文件）
-├── uploads/                            # 上传文件存储目录
-├── output/                             # 输出文件目录
-├── venv/                               # Python虚拟环境
-│
-├── walmart_pdf_parser.db               # SQLite数据库文件
-├── API_README.md                       # API完整使用文档（710行）
-├── API_QUICKSTART.md                   # API快速开始指南（173行）
-├── todo.md                             # 日常任务清单（进度跟踪）
-└── README_安装说明.txt                 # 环境安装说明
-```
-
-### 2.4 数据库设计
-
-**10个核心表结构**:
-
-| 表名 | 说明 | 主要字段 |
-|------|------|----------|
-| `pdf_files` | PDF文件主表 | id, filename, file_path, file_size, file_hash, upload_time, status |
-| `statement_headers` | 对账单头部信息 | pdf_id, statement_period_start, statement_period_end, marketplace |
-| `sales_details` | 销售明细 | pdf_id, total_sales, units_sold, shipping_charges, gift_wrap_charges |
-| `refund_details` | 退款明细 | pdf_id, total_refund, refund_amount, units_refunded |
-| `adjustment_details` | 调整明细 | pdf_id, adjustment_amount, adjustment_description |
-| `wfs_details` | WFS服务明细 | pdf_id, fulfillment_fee, storage_fee, removal_fee |
-| `other_activity_details` | 其他活动明细 | pdf_id, other_amount, other_description |
-| `statement_footers` | 对账单尾部 | pdf_id, total_paid, ending_balance |
-| `payment_details` | 付款详情 | pdf_id, payment_date, payment_amount, payment_method |
-| `dynamic_fields` | 动态字段扩展表 | pdf_id, section, field_name, field_value, field_type |
-
-**关系设计**:
-- 所有表通过 `pdf_id` 外键关联到 `pdf_files` 表
-- 级联删除：删除PDF文件时，自动删除所有关联数据
-- 自动时间戳：created_at 和 updated_at 字段自动维护
+- 自动化识别与结构化沃尔玛Marketplace财务PDF报表，支持OCR、分区、API、数据库、数据导出等全流程。
+- 技术栈：Python 3.11+、FastAPI、pdfplumber、PyMuPDF、Apple Vision OCR、OpenCV、SQLAlchemy、Pydantic、SQLite/MySQL/PostgreSQL。
+- 目录结构、数据库表结构、依赖与命令详见文末附录。
 
 ---
+## v1.0（2025-12-19发布，基础能力已完成）
 
-## 三、实现任务清单
+**主要内容：**
+- 项目基础架构、目录与依赖管理、数据库10表设计与优化、PDF解析与OCR、7大财务板块结构化、API接口、基础测试。
+- 详见历史阶段任务归档。
+
+**已完成：**
+- 环境与依赖、项目结构、数据库表与ORM、PDF与OCR主流程、API接口、集成测试、数据流程文档。
+
+---
+## v1.1（2026-01-02，当前开发中）
+
+**目标：**
+1. FastAPI服务验证与完善（健康检查、CORS、路由、Swagger文档）
+2. 补充Adjustment/WFS/OtherActivity/Footer/Payment等板块的完整支持
+3. 数据导出（Excel/CSV/JSON/批量导出）
+4. 数据验证增强、用户认证与权限控制
+5. 单元/集成测试补充，提升覆盖率，多页PDF与特殊场景支持
+
+**进度快照：**
+- 数据库与集成测试全部通过，API主功能已实现，待服务验证与板块补全
+- 详见 todo.md 获取每日任务与最新进展
+
+**未完成关键任务：**
+- [ ] 验证API服务可正常启动与功能联调
+- [ ] 完善API文档与交互式文档
+- [ ] 补全所有财务板块的CRUD与导出
+- [ ] 增强数据校验、实现认证与权限
+- [ ] 测试覆盖率>80%，多页PDF支持
+
+---
+## v2.0（规划/待定）
+
+**规划方向：**
+- 数据分析与可视化（销售/退款/对账单对比/财务指标/自定义分析）
+- 报表自动生成与模板管理
+- Docker容器化、Nginx/SSL生产部署、CI/CD自动化、日志监控、性能与安全加固
+- 前端界面开发（React/Vue）、用户体验优化
+
+---
+## 附录：常用命令与路径
+
+```bash
+# 激活虚拟环境
+source .venv/bin/activate
+# 启动API服务
+cd backend && uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# 初始化数据库
+python scripts/init_database.py
+# 运行完整流程测试
+python scripts/test_parse_pipeline.py
+# 运行批量测试
+python scripts/batch_test_direct_extraction.py
+```
+
+- **项目根目录**: /Users/jiaxinming/JxmWork/walmart-a/
+- **数据库文件**: walmart_pdf_parser.db
+- **API文档**: http://localhost:8000/api/docs
+- **测试PDF**: PdfData/
+- **上传目录**: uploads/
+- **主配置**: .claude/CLAUDE.md
+- **开发规范**: .claude/CORE.md
+- **API文档**: API_README.md
+- **快速指南**: API_QUICKSTART.md
+- **日常任务**: todo.md
+
+---
+**本文件仅保留各版本阶段核心任务与进展，历史详细任务与文档请查阅归档与todo.md。**
 
 ### Phase 1: 基础架构
 

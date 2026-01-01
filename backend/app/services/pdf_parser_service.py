@@ -110,8 +110,11 @@ class PDFParserService:
             logger.info("Step 3: 直接处理左侧板块...")
             left_processor = get_left_image_processor()
             left_data = left_processor.process_left_image(left_image, dpi=self.dpi)
-#            logger.info(f"  ✓ 提取到 {len(left_data['text_lines'])} 行文本")
-            #logger.info(f"  ✓ 提取到 {left_data['text_lines']} 行文本")
+            
+            # 适配新的板块结构化数据格式
+            section_count = left_data.get("metadata", {}).get("section_count", 0)
+            detail_count = left_data.get("metadata", {}).get("detail_count", 0)
+            logger.info(f"  ✓ 提取到 {section_count} 个板块，{detail_count} 个明细项")
 
             # Step 4: 右侧OCR识别 (暂时注释)
             # logger.info("Step 4: 右侧OCR识别...")

@@ -191,8 +191,8 @@ class LeftImageProcessorService:
             #         }
                     
             #         text_lines.append(text_line)
-            logger.info(f"成功merged_text合并为 {merged_text} 行文本")
-            logger.info(f"成功合并为 {len(text_infos)} 行文本")
+            #logger.info(f"成功merged_text合并为 {merged_text} 行文本")
+            #logger.info(f"成功合并为 {len(text_infos)} 行文本")
             return merged_text, text_infos
         except Exception as e:
             logger.error(f"合并文本行失败: {e}")
@@ -217,108 +217,253 @@ class LeftImageProcessorService:
         
         return [[min_x, min_y], [max_x, min_y], [max_x, max_y], [min_x, max_y]]
     
-    def extract_structured_data(self, text_lines: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """从文本行中提取结构化数据.
-        
-        基于文本内容和格式，提取关键字和对应的值，形成结构化数据.
+    def _has_amount(self, text: str) -> bool:
+        """判断文本是否包含金额特征（逗号、数字、美元符号等）.
         
         Args:
-            text_lines: 文本行列表，每个元素包含text、confidence、bbox、y等字段
+            text: 待判断的文本
+            
+        Returns:
+            bool: 是否包含金额特征
+        """
+        # 检查是否包含逗号（分隔字段和金额）
+        if "," not in text:
+            return False
+        
+        # 检查是否包含数字、美元符号、减号等金额特征
+        import re
+        amount_pattern = r'[\d\$¥\-\.]+'
+        parts = text.split(",")
+        if len(parts) >= 2:
+            # 检查分割后的第二部分是否包含数字/金额特征
+            return bool(re.search(amount_pattern, parts[-1]))
+        return False
+    
+    def _is_section_header(self, text: str, line_no: int) -> bool:
+        """判断文本是否为板块标题（如"销售"、"退款"等）.
+        
+        Args:
+            text: 待判断的文本
+            line_no: 行号
+            
+        Returns:
+            bool: 是否为板块标题
+        """
+        # 板块关键词列表
+        section_keywords = ["销售", "退款", "调整", "其他活动", "沃尔玛商品服务(WFS)", "WFS"]
+        
+        # 去除引号和空格后的文本
+        clean_text = text.strip().replace("'", "").strip()
+        
+        # 检查是否为板块关键词
+        for keyword in section_keywords:
+            if clean_text == keyword or (keyword in clean_text and "，" not in clean_text and "," not in clean_text):
+                return True
+        
+        # 特殊处理：WFS 板块的 OCR 识别错误
+        # 处理诸如 "沃尔玛商品服务(WVFS)" 这样的 OCR 错误
+        if "沃尔玛商品服务" in clean_text and ("WFS" in clean_text or "WVFS" in clean_text or "VFS" in clean_text):
+            logger.debug(f"[行 {line_no}] 检测到 WFS 板块标题（含 OCR 错误）：{clean_text}")
+            return True
+        
+        return False
+    
+    def jg_structured_data(self, text_lines: List[str]) -> Dict[str, Any]:
+        """将合并后的文本行结构化为板块+明细格式.
+        
+        根据行的内容特征（是否包含金额），自动识别板块和明细，支持动态切换板块.
+        
+        Args:
+            text_lines: 合并后的文本行列表（可以是字符串或dict，从merge_text_lines返回）
+            
+        Returns:
+            Dict[str, Any]: 板块结构化数据
+                {
+                    "sections": {
+                        "header": [...],
+                        "销售": [...],
+                        ...
+                        "footer": [...]
+                    },
+                    "metadata": {
+                        "section_order": ["header", "销售", ...],
+                        "section_count": <int>,
+                        "detail_count": <int>,
+                        "processed_at": "..."
+                    }
+                }
+        """
+        import time
+        import re
+        
+        logger.info("开始新的板块结构化数据提取")
+        
+        try:
+            # 处理 text_lines 的格式（可能是字符串或字典）
+            if isinstance(text_lines, str):
+                # 如果是字符串，按换行符分割
+                lines = text_lines.split("\n")
+            elif isinstance(text_lines, list) and text_lines and isinstance(text_lines[0], dict):
+                # 如果是字典列表，提取 "text" 字段
+                lines = [line.get("text", "") for line in text_lines]
+            elif isinstance(text_lines, list) and text_lines and isinstance(text_lines[0], str):
+                # 如果是字符串列表，直接使用
+                lines = text_lines
+            else:
+                # 其他情况，尝试转换为列表
+                lines = [str(text_lines)]
+            
+            # 初始化结果结构
+            structured_data = {
+                "sections": {},
+                "metadata": {
+                    "section_order": [],
+                    "section_count": 0,
+                    "detail_count": 0,
+                    "processed_at": time.strftime("%Y-%m-%d %H:%M:%S")
+                }
+            }
+            
+            current_section = "header"
+            second_payment_found = False  # 追踪是否遇到第二个"向您支付的金额"
+            payment_count = 0
+            
+            # 初始化第一个板块
+            structured_data["sections"][current_section] = []
+            structured_data["metadata"]["section_order"].append(current_section)
+            
+            # 扫描所有行
+            for line_no, line in enumerate(lines, start=1):
+                if not line.strip():
+                    continue
+                
+                line = line.strip()
+                
+                # ---- 判断 1：第二个"向您支付的金额" → 切换到 footer ----
+                if "向您支付的金额" in line:
+                    payment_count += 1
+                    if payment_count == 2 and not second_payment_found:
+                        logger.info(f"[行 {line_no}] 检测到第二个'向您支付的金额'，切换到 Footer 板块")
+                        second_payment_found = True
+                        current_section = "footer"
+                        if current_section not in structured_data["sections"]:
+                            structured_data["sections"][current_section] = []
+                            structured_data["metadata"]["section_order"].append(current_section)
+                
+                # ---- 判断 2：是否为板块标题行 ----
+                if self._is_section_header(line, line_no) and line_no > 2:
+                    # 切换板块
+                    clean_section_name = line.strip().replace("'", "").strip()
+                    
+                    # 处理 WFS 板块的 OCR 识别错误（如 WVFS -> WFS）
+                    if "沃尔玛商品服务" in clean_section_name:
+                        # 统一纠正为标准的 WFS 板块名称
+                        clean_section_name = "沃尔玛商品服务(WFS)"
+                        logger.info(f"[行 {line_no}] 纠正 WFS 板块名称为标准格式")
+                    
+                    if clean_section_name != current_section:
+                        logger.info(f"[行 {line_no}] 检测到板块标题：{clean_section_name}，切换板块")
+                        current_section = clean_section_name
+                        if current_section not in structured_data["sections"]:
+                            structured_data["sections"][current_section] = []
+                            structured_data["metadata"]["section_order"].append(current_section)
+                    continue  # 板块标题行本身不作为明细存储
+                
+                # ---- 判断 3：是否为明细行（包含金额） ----
+                if self._has_amount(line):
+                    # 解析明细行：字段名 + 金额
+                    try:
+                        parts = line.replace("'", "").split(",")
+                        if len(parts) >= 2:
+                            field_name = parts[0].strip()
+                            amount_str = parts[-1].strip()
+                            
+                            # 尝试解析为浮点数
+                            try:
+                                amount = float(amount_str.replace("美元", "").replace("$", "").strip())
+                            except ValueError:
+                                # 如果解析失败，保留原始字符串
+                                amount = amount_str
+                            
+                            detail_item = {
+                                "field": field_name,
+                                "value": amount,
+                                "raw": line,
+                                "line_no": line_no
+                            }
+                            structured_data["sections"][current_section].append(detail_item)
+                            logger.debug(f"[行 {line_no}] [{current_section}] {field_name} = {amount}")
+                    except Exception as e:
+                        logger.warning(f"[行 {line_no}] 解析明细行失败: {line}，错误: {e}")
+                else:
+                    # ---- 判断 4：非金额行但可能是描述（如日期区间） ----
+                    if line_no == 1 or (current_section == "header" and line_no <= 3):
+                        # 日期行或 header 中的非金额行
+                        detail_item = {
+                            "field": "统计区间",
+                            "value": line,
+                            "raw": line,
+                            "line_no": line_no
+                        }
+                        structured_data["sections"][current_section].append(detail_item)
+                        logger.debug(f"[行 {line_no}] [{current_section}] 描述行：{line}")
+            
+            # ---- 更新元数据 ----
+            structured_data["metadata"]["section_count"] = len(structured_data["sections"])
+            total_details = sum(len(items) for items in structured_data["sections"].values())
+            structured_data["metadata"]["detail_count"] = total_details
+            
+            logger.info(f"✓ 结构化提取完成：{structured_data['metadata']['section_count']} 个板块，"
+                       f"{structured_data['metadata']['detail_count']} 个明细项")
+            
+            return structured_data
+            
+        except Exception as e:
+            logger.error(f"结构化数据提取失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                "sections": {},
+                "metadata": {
+                    "section_order": [],
+                    "section_count": 0,
+                    "detail_count": 0,
+                    "processed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "error": str(e)
+                }
+            }
+    
+    def extract_structured_data(self, text_lines: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """从文本行中提取结构化数据（已弃用，使用 jg_structured_data）.
+        
+        此函数保留用于向后兼容，建议直接使用 jg_structured_data.
+        
+        Args:
+            text_lines: 文本行列表
             
         Returns:
             Dict[str, Any]: 结构化数据字典
         """
-        import time
-        logger.info("开始提取结构化数据")
-        
-        try:
-            # 初始化结构化数据
-            structured_data = {
-                "classdata": {
-                    "text_lines": text_lines,
-                    "key_value_pairs": {},
-                    "category_details": []  # 存储最终的类别+明细
-                },
-                "metadata": {
-                    "line_count": len(text_lines),
-                    "category_count": 0,
-                    "detail_count": 0,
-                    "processing_time": time.strftime("%Y-%m-%d %H:%M:%S")
-                }
-            }
-
-            # 核心解析逻辑
-            current_category = "header"  # 临时存储当前类别名
-            current_details = []   # 临时存储当前类别的明细
-
-            for i, line_dict in enumerate(text_lines, start=1):
-                line = line_dict["text"]  # 从字典中获取文本内容
-                
-                # ---- 判断1：是【类别行】（纯字符串，无逗号） ----
-                if "," not in line and i>2:
-                    # 如果不是第一个类别，先把上一个类别的数据存入结构体
-                    if current_category and current_details:
-                        structured_data["classdata"]["category_details"].append({
-                            "类别名称": current_category,
-                            "明细列表": current_details
-                        })
-                    # 切换为新的类别
-                    current_category = line
-                    current_details = []  # 清空明细，准备存新类别的数据
-                # ---- 判断2：是【明细行】（有逗号，字段名+金额） ----
-                else:
-                    if "向您支付的金额" in line.strip() and i>15:
-                        # 如果不是第一个类别，先把上一个类别的数据存入结构体
-                        if current_category and current_details:
-                            structured_data["classdata"]["category_details"].append({
-                                "类别名称": current_category,
-                                "明细列表": current_details
-                            })
-                        # 切换为新的类别
-                        current_category = "footer"
-                        current_details = []  # 清空明细，准备存新类别的数
-                    else:
-                        # 解析明细行：剔除单引号 + 分割字段名和金额
-                        field_name, amount_str = line.replace("'", "").split(",")
-                        # 金额转数值类型(float)，并去除首尾空格（防止格式不规范）
-                        amount = float(amount_str.strip())
-                        # 把解析后的明细存入临时列表
-                        current_details.append({
-                            "字段名": field_name.strip(),
-                            "金额": amount
-                        })
-
-            # ---- 处理最后一个类别的数据（循环结束后，最后一个类别还没存入） ----
-            if current_category and current_details:
-                structured_data["classdata"]["category_details"].append({
-                    "类别名称": current_category,
-                    "明细列表": current_details
-                })
-
-            # ========== 4. 自动更新元数据统计信息 ==========
-            structured_data["metadata"]["category_count"] = len(structured_data["classdata"]["category_details"])
-            # 统计所有明细的总行数
-            total_detail = sum(len(item["明细列表"]) for item in structured_data["classdata"]["category_details"])
-            structured_data["metadata"]["detail_count"] = total_detail
-                    
-            #logger.info(f"成功提取 {len(structured_data['key_value_pairs'])} 个键值对")
-            return structured_data
-        except Exception as e:
-            logger.error(f"提取结构化数据失败: {e}")
-            # 返回部分数据，而不是空字典
-            return structured_data
+        logger.warning("extract_structured_data 已弃用，请使用 jg_structured_data")
+        return self.jg_structured_data(text_lines)
     
     def process_left_image(self, image: np.ndarray, dpi: int = 800) -> Dict[str, Any]:
         """处理左侧图片的主函数.
         
         整合所有处理步骤，从图片输入到结构化数据输出.
+        流程：
+        1. 图片预处理
+        2. 提取文本块（OCR）
+        3. 格式化文本块
+        4. 合并文本行
+        5. 结构化数据提取（按板块+明细）
         
         Args:
             image: 输入图片（numpy数组，BGR格式）
             dpi: 图片DPI，用于动态调整处理参数
             
         Returns:
-            Dict[str, Any]: 处理结果，包含原始文本行和结构化数据
+            Dict[str, Any]: 处理结果，包含板块结构化数据
             
         Raises:
             RuntimeError: 处理过程中发生严重错误
@@ -328,32 +473,43 @@ class LeftImageProcessorService:
         logger.info("=" * 60)
         
         try:
-            # 1. 图片预处理
+            # Step 1: 图片预处理
+            logger.info("Step 1: 图片预处理")
             processed_image = self.preprocess_image(image, dpi=dpi)
             
-            # 2. 提取文本块
+            # Step 2: 提取文本块
+            logger.info("Step 2: 提取文本块（OCR）")
             ocr_results = self.extract_text_blocks(processed_image)
-            #logger.info(f"提取文本块 {ocr_results} ")
+            logger.info(f"  ✓ 成功提取 {len(ocr_results)} 个文本块")
             
-            # 3. 格式化文本块
+            # Step 3: 格式化文本块
+            logger.info("Step 3: 格式化文本块")
             formatted_results = self.format_text_blocks(ocr_results)
-            logger.info(f"格式化文本块 {formatted_results} ")
+            logger.info(f"  ✓ 成功格式化 {len(formatted_results)} 个文本块")
             
-            # 4. 合并文本行
-            text_lines = self.merge_text_lines(formatted_results)
-            logger.info(f"合并文本行 {text_lines} ")
+            # Step 4: 合并文本行
+            logger.info("Step 4: 合并文本行")
+            merged_text, text_infos = self.merge_text_lines(formatted_results)
+            logger.info(f"  ✓ 合并完成：合并文本长度 {len(str(merged_text))} 字符")
             
-            # 5. 提取结构化数据
-            structured_data = self.extract_structured_data(text_lines)
-            logger.info(f"提取结structured_data构化数据 {structured_data} ")
+            # Step 5: 结构化数据提取
+            logger.info("Step 5: 结构化数据提取（板块+明细）")
+            structured_data = self.jg_structured_data(merged_text)
+            logger.info(f"  ✓ 提取完成：{structured_data['metadata']['section_count']} 个板块，"
+                       f"{structured_data['metadata']['detail_count']} 个明细项")
             
+            logger.info("=" * 60)
             logger.info("左侧图片处理完成")
             logger.info("=" * 60)
-
             
             return structured_data
+            
         except Exception as e:
+            logger.error("=" * 60)
             logger.error(f"左侧图片处理失败: {e}")
+            logger.error("=" * 60)
+            import traceback
+            logger.error(traceback.format_exc())
             raise RuntimeError(f"左侧图片处理失败: {e}") from e
 
 

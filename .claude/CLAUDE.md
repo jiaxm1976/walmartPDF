@@ -1,184 +1,57 @@
-# Walmart PDF解析系统 - Claude开发助手配置
+Walmart-a 项目的 Copilot/AI 代理使用说明
 
-> **版本**: v4.1 | **更新**: 2025-12-16 | **架构**: 分层配置体系
+**默认交互语言：简体中文（zh-CN）**。请使用中文回答所有交互、注释与文档，除非有明确说明需要使用其它语言。
 
----
+所有交互和文档使用中文
+目标
+帮助 AI 编码代理快速熟悉本仓库并高效开展工作。操作应保持轻量化、有测试支撑且可回退。
+项目概览 ✅
+技术栈：Python 后端（3.9 及以上版本，已适配 3.11）+ React 前端（基于 CRA 创建）。
+核心模块：backend/（OCR 识别、PDF 解析、FastAPI 接口）、frontend/（React 应用）、scripts/（脚本工具）和.claude/（项目 / 上下文文档）。
+注意事项：大型机器学习模型（PaddleOCR）将在运行时自动下载，请勿提交模型文件、虚拟环境或其他大文件至仓库。
+环境配置与常用命令 🔧
+创建并激活虚拟环境（macOS/Linux 系统）：
+python -m venv .venv && source ./ .venv/bin/activate
 
-## 🎯 项目概览
-
-### 一句话描述
-**自动化处理沃尔玛市场（Walmart Marketplace）财务对账单的PDF报表识别和数据分析系统**
-
-### 核心能力
-- PDF自动解析（pdfplumber）
-- OCR文字识别（PaddleOCR）
-- 智能图像分割（OpenCV）
-- 数据结构化提取（正则+规则引擎）
-- 数据库存储 （SQLite） 
-- 数据库文件 `/Users/jiaxinming/JxmWork/walmart-a/walmart_pdf_parser.db`
-- 后续：Web API + 前端
-
-### 环境管理
-```bash
-# 激活虚拟环境
-source .venv/bin/activate
-
-# 安装依赖 (使用阿里云镜像)
-pip install -i https://mirrors.aliyun.com/pypi/simple/ -r backend/requirements.txt
-```
----
-
-### 当前进度
-- 项目总体开发方案，在项目开始阶段设计出来，并存放在 '.claude/TaskList.md'文件中，需要调整有用户发起调整。
-- 过程中的任务清单存放在 './todo.md'文件中
-
-
----
-### 我的习惯 
- - **默认交互语言：简体中文（zh-CN）** — 所有与 AI 及贡献者的交互、文档与注释默认为中文，除非另有说明。
- - 你是专业的全站工程师助手，专业，非常专业
- - 定期重置上下文，超过2000行，使用/compact 命令
- - 不要随便输出md文档，只需要将重要信息保存在项目文档中’walmart-a/.claude/context/‘目录下，项目文档分级构建，主文件main.md,主文件只有菜单链接，通过跳转到各模块文档,文档用中文命名，方便Claude随时参考。需要生成前和我确认，我确认才开始生成，不确认之前不生成。
- - 项目开始前，需要创建一个todo.md 命令文件，运行/todo命令来管理任务列表,任务类标树状保存
- - 每次执行/exit 先更新todo.md 
- - 注释策略 适度注释
- - 写代码后 写测试代码，测试代码执行后日志写到测试覆盖率>80%，需要测试问题从backend/tests/testlog+序号.log中读取分析
- - 测试代码策略 测试代码可以离开环境执行，日志输出到backend/tests/testlog+序号.log文件中，每次测试
- - 牢记不要过度工程化，牢记
- - 所有解决方案必须以“编号分步执行列表”的形式输出，每一步包含：
-   - 操作目的（简要说明这一步要做什么）
-   - 禁止无结构的文本描述，禁止省略关键执行步骤。
-
-## ⚡ 快速命令
-- 帮我理解
-```
-□ 分层解释 （解释清楚了吗?）
-□ 有示例吗? (代码示例)
-□ 有验证吗? (运行验证)
-□ 建议吗?
-```
-
-
-
-## 🔴 代码注释铁律（强制执行）
-
-### 1. 文件头注释（必需）
-```python
-# ============================================================
-# 文件: backend/app/services/example_service.py
-# 功能: [一句话描述核心功能]
-# 作者: [姓名或团队]
-# 创建时间: 2025-12-15
-# 最后修改: 2025-12-15
-# 依赖: [列出核心依赖库]
-# 说明: [可选：额外的重要说明]
-# ============================================================
-
-**函数代码**:
--适度注释，核心语句
-
-‘’‘
-
-
-## Claude任务完成反馈格式规范
-**良好反馈的标准**：
-- ✅ 用户10秒内理解核心结果
-- ✅ 用户清楚知道下一步做什么
-- ✅ 没有冗余或重复信息
-- ✅ 关键数字清晰可见
-- ✅ 格式清爽易读
-
-### **场景：需要用户决策时**
-
-## 🤔 需要您决策
-
-**当前状况**：[一句话说明]
-
-**方案对比**：
-| 方案 | 优点 | 缺点 | 工作量 |
-|-----|------|------|--------|
-| A   | XXX  | XXX  | 2小时  |
-| B   | XXX  | XXX  | 4小时  |
-
-**建议**：方案A（原因：XXX）
-
-**请回复**：选择A还是B？
-```
-**解决方案**：
-1. [方案1 - 推荐]：预计XX时间
-2. [方案2]：预计XX时间
-
-
-### 测试文件组织
-```
-backend/tests/
-├── unit/                    # 单元测试
-│   ├── test_ocr_engine.py
-│   ├── test_pdf_parser.py
-│   └── test_image_splitter.py
-├── integration/             # 集成测试
-│   └── test_full_pipeline.py
-├── test_data/               # 测试数据
-│   └── sample_pdfs/
-├── fixtures/                # 测试fixtures
-│    └── __init__.py
-└── output/                # 测试输出目录
-    
-
-
-## 🏗️ 项目结构速览
-
-```
-walmart-a/                  (1.6GB total)
-├── .claude/                # Claude配置（当前目录）
-│   ├── CLAUDE.md          # 本文件（主配置）
-│   ├── QUICKREF.md        # 快速参考卡 ⚡ NEW
-│   ├── CORE.md            # 核心开发规范
-│   ├── AI-ASSIST.md       # AI辅助配置
-│   ├── specs/             # 专项深度指南
-│   │   └── ocr-guide.md
-│   ├── context/           # 动态上下文
-│   │   ├── current-sprint.md
-│   │   ├── known-issues.md
-│   │   ├── error-patterns.md  ⚡ NEW
-│   │   └── recent-changes.md
-│   └── settings.local.json
-│
-├── backend/                # 后端核心代码 (4.1MB)
-│   ├── app/
-│   │   ├── services/      # 业务逻辑层
-│   │   │   ├── ocr_engine.py           # OCR引擎封装
-│   │   │   ├── pdf_parser.py           # PDF解析器
-│   │   │   ├── image_splitter.py       # 图像分割器
-│   │   │   ├── section_splitter.py     # 区块分割
-│   │   │   └── pdf_section_splitter.py # PDF区块处理
-│   │   ├── utils/         # 工具函数
-│   │   ├── models/        # 数据模型（待实现）
-│   │   └── schemas/       # Pydantic schemas（待实现）
-│   ├── tests/             # 测试目录
-│   │   ├── unit/          # 单元测试（待完善）
-│   │   ├── fixtures/      # 测试fixtures
-│   │   └── test_data/     # 测试数据
-│   │       └── sample_pdfs/  # 6个测试PDF
-│   └── requirements.txt
-│
-├── scripts/                # 开发脚本 (24KB)
-│   ├── create_calibration.py    # 坐标校准生成
-│   ├── quick_visualize.py       # OCR可视化工具
-│   └── test/               # 测试目录规范
-│       ├── test-code/     # 所有测试代码
-│       ├── test-output/   # 所有测试输出
-│       └── test-md/       # 所有测试文档
-│
-├── calibration_data/       # OCR坐标校准数据 (332KB)
-│   └── ocr_calibration_300dpi.pkl
-│
-├── PdfData/                # 测试PDF样本 (3.5MB)
-├── venv/                   # Python 3.11.9虚拟环境 (1.5GB)
-└── README_安装说明.txt
-```
-
-
-**END OF CLAUDE.md**
-
-*配置版本: v4.1 | 最后更新: 2025-12-16 | 文件行数: 约235行*
+（注：仓库脚本已兼容 legacy `venv`，推荐使用 `.venv`）
+安装 Python 依赖：
+pip install -r backend/requirements.txt
+启动后端 API 服务（开发环境）：
+uvicorn backend.main:app --reload --port 8000（接口文档地址：http://localhost:8000/api/docs）
+或执行 python backend/main.py（该模块内置了 uvicorn 运行器）。
+运行测试：
+批量运行测试：pytest backend/tests -q；运行单个测试文件：pytest backend/tests/unit/test_pdf_parser.py -q
+启动前端（开发环境）：
+cd frontend && npm install && npm start
+实用脚本工具：
+python scripts/quick_visualize.py <pdf> 或 python scripts/create_calibration.py（详见scripts/目录下说明）
+架构概览（优先阅读文件）📚
+backend/app/services/ — 核心业务逻辑层（包含 ocr_engine.py、pdf_parser.py、image_splitter.py、keyword_extractor/locator 等模块）
+backend/main.py — FastAPI 应用实例与启动钩子（调用database.config.init_database()初始化数据库）
+backend/database/config.py — 数据库配置：默认使用 SQLite 数据库，文件路径为backend/data/walmart_pdf_parser.db，可通过DB_TYPE环境变量切换数据库类型
+backend/tests/ — 单元测试与集成测试；测试用例 PDF 文件存放在backend/tests/test_data/
+.claude/CLAUDE.md — 项目级开发者与 AI 助手协作规范（如需了解现有约定和文档格式要求，请优先阅读此文件）
+修改核心功能时，请优先阅读以下文件：backend/app/services/pdf_parser.py、backend/app/services/ocr_engine.py，以及对应的测试文件：backend/tests/integration/test_full_pipeline.py 和 backend/tests/unit/*。
+项目特定规范与注意事项 ⚠️
+文件头部注释规范：许多文件要求添加标准化的头部注释段落（详见.claude/CLAUDE.md），新增文件时请保持格式统一。
+测试输出存储：测试日志和中间输出文件将存储在测试专属目录中（详见test_*辅助函数）。部分测试用例会将输出结果写入test_results/ 或 backend/tests/output/目录。
+OCR 引擎选择：PaddleOCR 模型初始化耗时较长（需下载约 1-2GB 文件）。在 macOS 系统中，测试用例通常使用 Apple Vision OCR 引擎以提升速度，示例代码见test_pdf_to_json.py：OCREngine(engine_type="vision")。
+数据库初始化：通过init_database()完成数据库初始化；生产环境建议使用 Alembic 进行数据库迁移（本仓库暂未实现全自动化迁移流程）。
+代码提交规范：提交 Pull Request（PR）时，请保持改动范围精简，所有功能变更需附带对应的测试用例，并更新 README 或相关文档。
+PR 与自动化操作示例 👇
+本地运行单个集成测试用例：
+pytest backend/tests/integration/test_full_pipeline.py -q
+初始化数据库（本地开发环境，使用 SQLite）：
+python -c "from backend.database.config import init_database; init_database()"
+本地开发时用 Vision 引擎替换 PaddleOCR（macOS 系统）：
+在测试代码或脚本中添加：OCREngine(engine_type="vision")（详见test_pdf_to_json.py示例）。
+何时需要咨询人工 / 提交问题工单 ❗
+如需修改数据模型或数据库迁移策略：在实现前请先提交问题工单讨论。
+如需引入重量级第三方模型或修改模型运行时下载逻辑。
+如需变更.claude/CLAUDE.md中的协作规范或测试日志存储要求。
+变更文档记录位置 ✍️
+若变更影响 AI 助手行为或项目文档，请更新.claude/context/目录下的相关文件。
+若新增基础设施或修改环境配置命令，请更新README_安装说明.txt，或在项目根目录添加README.md，简要记录开发环境快速搭建步骤。
+AI 代理代码合并指南 🔁
+保留维护者编写的原有内容，新增说明请添加在## 更新日志章节下，并标注日期和修改原因。
+所有功能变更需添加最简测试用例和可复现的场景示例。
