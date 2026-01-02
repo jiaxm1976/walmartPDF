@@ -4,6 +4,13 @@
 **难度**: ⭐ 简单  
 **前置条件**: Python 3.9+，SQLite3
 
+> 注意：仓库文档已分层管理——最新的运行与调试指南放在 `.claude/IMPORT_SERVER_DOCS.md`，旧版参考和历史设计文档已移入 `archived/` 目录，以免误用旧流程。
+
+最新运行文档：
+
+- [导入服务文档（最新）](.claude/IMPORT_SERVER_DOCS.md)
+
+
 ---
 
 ## ⚡ 30 秒快速开始
@@ -186,3 +193,31 @@ importer.disconnect()
 ```bash
 python scripts/init_database_v2.py
 ```
+
+
+---
+
+## 🔍 代码质量与安全性
+
+**后端代码审计结果** (2026-01-02)：
+- **整体评分**: 7.6/10（生产级别）
+- **改进**: 已修复高优先级问题（输入验证、错误处理、事务管理）
+- **详见**: [代码审计报告](.claude/CODE_AUDIT_REPORT_V1.md)
+
+**最近改进**：
+- ✓ 强化 `StructuredDataImporter` 的输入验证与错误恢复
+- ✓ 添加事务回滚逻辑，防止部分导入失败导致数据不一致
+- ✓ 改进日志记录，支持故障诊断
+
+---
+
+## 归档文档（旧）
+
+旧的实现细节与 v1 设计文档已归档，避免误用旧脚本或 SQL。归档位置：
+
+- `archived/backend/database/schema_design_v1.sql` — v1 SQL 初始化脚本（已归档）
+- `archived/scripts/db_import_new_structure.py` — 旧导入脚本存档副本
+- `archived/INDEX.md` — 归档内容索引（便于恢复与查询）
+- `.claude/archive/` — 历史设计说明与实现文档（保留变更记录）
+
+如需查看历史版本，请在上述目录中检索；开发/运行请优先参考顶部的“导入服务文档（最新）”。

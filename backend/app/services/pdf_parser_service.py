@@ -12,6 +12,8 @@ import numpy as np
 from backend.app.services.keyword_locator import KeywordLocator
 from backend.app.services.left_image_processor_service import get_left_image_processor
 from backend.app.utils.image_utils import pdf_to_images
+from backend.app.services.ocr_engine import OCREngine
+from backend.app.services.right_section_ocr import RightSectionOCR
 
 
 logger = logging.getLogger(__name__)
@@ -111,21 +113,29 @@ class PDFParserService:
             left_processor = get_left_image_processor()
             left_data = left_processor.process_left_image(left_image, dpi=self.dpi)
             
+            # Step 4: 右侧OCR识别（仅传右侧图像；OCR 引擎在 RightSectionOCR 内部初始化）
+            logger.info("Step 4: 右侧OCR识别...")
+            try:
+                right_ocr = RightSectionOCR()
+                right_result = right_ocr.process_right_image(right_image)
+                # right_result 格式: {"payment_details": {...}}
+                right_data = right_result.get('payment_details', {}) if isinstance(right_result, dict) else {}
+                logger.info(f"  ✓ 提取到付款详情: {len(right_data)} 个字段")
+            except Exception as e:
+                logger.warning(f"⚠ 右侧 OCR 识别失败，已跳过右侧数据: {e}")
+                right_data = {}
+
+            
             # 适配新的板块结构化数据格式
             section_count = left_data.get("metadata", {}).get("section_count", 0)
             detail_count = left_data.get("metadata", {}).get("detail_count", 0)
             logger.info(f"  ✓ 提取到 {section_count} 个板块，{detail_count} 个明细项")
 
-            # Step 4: 右侧OCR识别 (暂时注释)
-            # logger.info("Step 4: 右侧OCR识别...")
-            # right_ocr = RightSectionOCR(self.ocr_engine)
-            # right_data = right_ocr.process_right_image(right_image)
-            # logger.info(f"  ✓ 提取到付款详情")
-
+           
             # 整合数据
             result_data = {
                 "left_section": left_data,
-                "right_section": {}  # 右侧数据暂时为空
+                "right_section": right_data
             }
 
             # 保存中间结果（可选）

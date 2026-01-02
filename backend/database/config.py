@@ -113,7 +113,7 @@ def init_database():
     注意：生产环境建议使用Alembic进行数据库迁移。
     """
     # 导入所有模型（确保模型被注册）
-    import database.models  # noqa
+    from backend.database import models  # noqa
     Base.metadata.create_all(bind=engine)
     print(f"✓ 数据库初始化完成 ({DB_TYPE})")
     print(f"✓ 数据库URL: {get_database_url()}")

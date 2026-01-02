@@ -38,13 +38,23 @@ class RightSectionOCR:
     - 警告信息（Warning Message）
     """
 
-    def __init__(self, ocr_engine: OCREngine):
-        """初始化OCR识别器.
+    def __init__(self, ocr_engine: Optional[OCREngine] = None):
+        """初始化OCR识别器。
+
+        如果外部未提供 `ocr_engine`，在此处自动初始化一个 `OCREngine` 实例。
 
         Args:
-            ocr_engine: OCR引擎实例
+            ocr_engine: 可选的 OCR 引擎实例；若为 None 则内部创建默认引擎
         """
-        self.ocr_engine = ocr_engine
+        if ocr_engine is None:
+            try:
+                self.ocr_engine = OCREngine()
+            except Exception as e:
+                logger.error(f"初始化 OCREngine 失败: {e}")
+                raise
+        else:
+            self.ocr_engine = ocr_engine
+
         logger.info("=" * 60)
         logger.info("初始化右侧付款详情OCR识别器")
         logger.info("=" * 60)
@@ -98,19 +108,51 @@ class RightSectionOCR:
         
         # 使用text_formatter中的merge_text_blocks函数合并文本块
         merged_text, text_infos = merge_text_blocks(ocr_results, y_tolerance=15)
-        
+
         # 将合并后的文本字符串转换为List[Tuple[str, float]]格式
         text_lines = []
         if merged_text:
             lines = merged_text.split('\n')
-            for line in lines:
+
+            # 尝试从 text_infos 提取 center_y 列表；如果不可用，则从原始 ocr_results 计算中心Y作为备用
+            centers = []
+            try:
+                if isinstance(text_infos, list) and text_infos:
+                    centers = [getattr(info, 'center_y') for info in text_infos if hasattr(info, 'center_y')]
+            except Exception:
+                centers = []
+
+            # 备用：从 ocr_results 计算每个原始文本块的 center_y
+            if not centers and ocr_results:
+                try:
+                    alt_centers = []
+                    for box, (_t, _c) in ocr_results:
+                        try:
+                            cy = (box[0][1] + box[2][1]) / 2
+                            alt_centers.append(float(cy))
+                        except Exception:
+                            continue
+                    if alt_centers:
+                        centers = alt_centers
+                except Exception:
+                    centers = []
+
+            for idx, line in enumerate(lines):
                 if line.strip():
                     # 解析每行的文本块，格式为：'文本1','文本2','文本3'
                     text_blocks = line.split(',')
                     # 移除单引号并合并为一个字符串
                     merged_line_text = ' '.join([tb.strip().strip("'") for tb in text_blocks])
-                    # 计算该行的Y坐标（取所有文本块的中心Y坐标平均值）
-                    line_y = sum(info.center_y for info in text_infos) / len(text_infos) if text_infos else 0.0
+
+                    # 计算该行的Y坐标：优先使用 centers 列表对应索引，否则退回到行索引
+                    try:
+                        if centers and idx < len(centers):
+                            line_y = float(centers[idx])
+                        else:
+                            line_y = float(idx)
+                    except Exception:
+                        line_y = float(idx)
+
                     text_lines.append((merged_line_text, line_y))
         
         # 按Y坐标排序

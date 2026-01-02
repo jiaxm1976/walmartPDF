@@ -63,3 +63,4 @@ htmlcov/
 .tmp/
 *.tmp
 frontend/
+archived/

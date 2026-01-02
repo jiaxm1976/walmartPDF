@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.database.structured_importer import StructuredDataImporter
 from backend.app.services.pdf_parser_service import PDFParserService
+from backend.app.services.right_section_processor import RightSectionProcessor, merge_right_section_to_structured_data
 
 
 class BatchImportLogger:
@@ -106,7 +107,7 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
             return True, 0
 
         # Step 1: 解析 PDF
-        logger.log(f'[1/3] 正在解析 PDF: {pdf_name}', 'DEBUG')
+        logger.log(f'[1/4] 正在解析 PDF: {pdf_name}', 'DEBUG')
         parser = PDFParserService()
         result = parser.parse_pdf_direct(str(pdf_path))
 
@@ -114,8 +115,8 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
             logger.log(f'PDF 解析失败: {result.get("error")}', 'ERROR')
             return False, 0
 
-        # Step 2: 获取结构化数据
-        logger.log(f'[2/3] 正在提取结构化数据...', 'DEBUG')
+        # Step 2: 获取结构化数据（左侧）
+        logger.log(f'[2/4] 正在提取左侧结构化数据...', 'DEBUG')
         parsed_data = result.get('data', {})
 
         # parse_pdf_direct 返回 left_section，需要从中提取 jg_structured_data
@@ -132,8 +133,20 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
                 logger.log(f'结构化数据格式错误，使用默认结构', 'WARN')
                 jg_data = {"sections": {"header": [], "footer": []}, "metadata": {}}
 
-        # Step 3: 导入到数据库
-        logger.log(f'[3/3] 正在导入到数据库...', 'DEBUG')
+        # Step 3: 提取并处理右侧数据
+        logger.log(f'[3/4] 正在提取右侧数据...', 'DEBUG')
+        right_processor = RightSectionProcessor()
+        right_section = right_processor.extract_right_section(parsed_data)
+        
+        if right_section and right_processor.validate_right_section_data(right_section):
+            formatted_right = right_processor.format_right_section_for_db(right_section)
+            jg_data = merge_right_section_to_structured_data(jg_data, formatted_right)
+            logger.log(f'✓ 右侧数据提取成功 ({len(formatted_right)} 个字段)', 'DEBUG')
+        else:
+            logger.log(f'⚠ 没有找到有效的右侧数据，将只导入左侧数据', 'WARN')
+
+        # Step 4: 导入到数据库
+        logger.log(f'[4/4] 正在导入到数据库...', 'DEBUG')
         statement_id = importer.import_jg_data(pdf_name, jg_data)
 
         if statement_id is None:
@@ -149,6 +162,8 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
 
     except Exception as e:
         logger.log(f'{pdf_name} 处理失败: {e}', 'ERROR')
+        import traceback
+        logger.log(f'错误堆栈: {traceback.format_exc()}', 'DEBUG')
         return False, 0
 
 
@@ -219,7 +234,7 @@ def main():
         
         # 处理每个 PDF
         print('\n' + '='*60)
-        logger.log(f'开始批量导入 {len(pdfs)} 个 PDF...', 'INFO')
+        logger.log(f'开始批量导入 {len(pdfs)} 个 PDF（包含左侧和右侧数据）...', 'INFO')
         print('='*60 + '\n')
         
         success_count = 0
@@ -263,6 +278,21 @@ def main():
     
     for section_name, count in db_info.get('section_distribution', {}).items():
         print(f'  • {section_name}: {count} 条')
+    
+    # 验证右侧数据导入
+    right_section_count = db_info.get('section_distribution', {}).get('right_section', 0)
+    if right_section_count > 0:
+        print(f"""
+✅ 右侧数据导入成功！
+  • right_section: {right_section_count} 条记录
+  • 包含 9 个标准字段：状态、付款日期、周期付款等
+""")
+    else:
+        print(f"""
+⚠️  右侧数据未导入
+  • 请检查 PDF 中是否包含右侧信息
+  • 检查 parse_pdf_direct 是否返回 right_section 数据
+""")
     
     if logger.errors:
         print(f'\n⚠️  错误总结（{len(logger.errors)} 个）：')

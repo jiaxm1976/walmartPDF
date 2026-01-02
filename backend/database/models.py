@@ -11,7 +11,7 @@ from sqlalchemy import (
     Enum, DECIMAL, Date, ForeignKey
 )
 from sqlalchemy.orm import relationship
-from database.config import Base
+from backend.database.config import Base
 
 
 # ============================================================
@@ -296,6 +296,43 @@ class DynamicField(Base):
 
     # 关联关系
     pdf_file = relationship("PDFFile", back_populates="dynamic_fields")
+
+
+# ============================================================
+# 2. V2 Schema - 简化的核心表结构
+# ============================================================
+
+class Statement(Base):
+    """财务报表主表（V2）"""
+    __tablename__ = "statements"
+    
+    id = Column(Integer, primary_key=True, comment="报表ID")
+    pdf_name = Column(String(255), nullable=False, unique=True, index=True, comment="PDF文件名")
+    statement_period = Column(String(255), comment="统计期间")
+    payment_to_you = Column(String(255), comment="向您支付的金额")
+    opening_balance = Column(String(255), comment="期初余额")
+    reserve_fund = Column(String(255), comment="备用金")
+    pending_payment = Column(String(255), comment="回款等待")
+    created_at = Column(DateTime, nullable=True, default=datetime.now, comment="创建时间")
+    updated_at = Column(DateTime, nullable=True, default=datetime.now, comment="更新时间")
+    
+    # 关联关系
+    section_data = relationship("SectionData", back_populates="statement", cascade="all, delete-orphan")
+
+
+class SectionData(Base):
+    """板块数据表（V2）"""
+    __tablename__ = "section_data"
+    
+    id = Column(Integer, primary_key=True, comment="板块ID")
+    statement_id = Column(Integer, ForeignKey("statements.id", ondelete="CASCADE"), nullable=False, index=True, comment="报表ID")
+    section_name = Column(String(100), nullable=False, index=True, comment="板块名称（header/sales/refund/adjustment/wfs/other/footer/payment等）")
+    data = Column(Text, nullable=False, comment="板块数据（JSON格式）")
+    created_at = Column(DateTime, nullable=True, default=datetime.now, comment="创建时间")
+    updated_at = Column(DateTime, nullable=True, default=datetime.now, comment="更新时间")
+    
+    # 关联关系
+    statement = relationship("Statement", back_populates="section_data")
 
 
 # ============================================================

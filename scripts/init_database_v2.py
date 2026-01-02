@@ -139,6 +139,57 @@ def verify_schema():
         return False
 
 
+def init_right_section():
+    """初始化右侧数据字段频率"""
+    try:
+        import sqlite3
+        
+        # 右侧数据标准字段列表
+        RIGHT_SECTION_FIELDS = [
+            '状态',
+            '付款日期',
+            '周期付款',
+            '付款方式',
+            '设备方式',
+            '待付款金额',
+            '等待回款金额',
+            '回款等待期',
+            '警告信息'
+        ]
+        
+        conn = sqlite3.connect(str(DB_PATH))
+        cursor = conn.cursor()
+        
+        count = 0
+        for field_name in RIGHT_SECTION_FIELDS:
+            # 检查字段是否已存在
+            cursor.execute(
+                "SELECT id FROM field_frequency WHERE section_name = ? AND field_name = ?",
+                ('right_section', field_name)
+            )
+            
+            if not cursor.fetchone():
+                # 插入新记录，右侧数据字段全部设为高频（频率 2）
+                cursor.execute(
+                    """
+                    INSERT INTO field_frequency (section_name, field_name, frequency, frequency_percent)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    ('right_section', field_name, 2, 100.0)
+                )
+                count += 1
+        
+        conn.commit()
+        conn.close()
+        
+        log(f'右侧数据字段初始化完成 ({count} 个新字段，共 {len(RIGHT_SECTION_FIELDS)} 个)', 'INFO')
+        return True
+        
+    except Exception as e:
+        log(f'右侧数据初始化失败: {e}', 'ERROR')
+        return False
+
+
 def main():
     """主流程"""
     print("""
@@ -152,19 +203,24 @@ def main():
         log('开始 Phase 2 数据库初始化...', 'INFO')
         
         # 步骤 1: 备份
-        log('步骤 1/4: 备份现有数据库', 'INFO')
+        log('步骤 1/5: 备份现有数据库', 'INFO')
         backup_path = backup_database()
         
         # 步骤 2: 删除
-        log('步骤 2/4: 删除旧数据库', 'INFO')
+        log('步骤 2/5: 删除旧数据库', 'INFO')
         delete_database()
         
         # 步骤 3: 初始化
-        log('步骤 3/4: 执行 schema 初始化', 'INFO')
+        log('步骤 3/5: 执行 schema 初始化', 'INFO')
         init_schema()
         
-        # 步骤 4: 验证
-        log('步骤 4/4: 验证表结构', 'INFO')
+        # 步骤 4: 初始化右侧数据
+        log('步骤 4/5: 初始化右侧数据字段频率', 'INFO')
+        if not init_right_section():
+            raise RuntimeError('右侧数据初始化失败')
+        
+        # 步骤 5: 验证
+        log('步骤 5/5: 验证表结构与右侧数据', 'INFO')
         if not verify_schema():
             raise RuntimeError('schema 验证失败')
         
@@ -177,12 +233,19 @@ def main():
   ✓ 数据库已清空并重建
   ✓ Schema V2 已初始化
   ✓ 所有表与视图已创建
-  ✓ field_frequency 已填充 31 个字段
+  ✓ field_frequency 已填充 40 个字段（基础 31 个 + 右侧 9 个）
+  ✓ 右侧数据板块已初始化
 
 📍 数据库位置: {DB_PATH}
 
 🔄 备份信息:
   {f'✓ 已备份至: {backup_path}' if backup_path else '⚠ 无备份'}
+
+🔧 右侧数据说明：
+  • 板块名: 'right_section'
+  • 字段数: 9 个
+  • 存储位置: section_data 表
+  • 特点: 所有字段都被视为高频字段（不会被合并到 _其他）
 
 🚀 下一步 (Phase 3): 单 PDF 导入测试
   python scripts/test_single_pdf_import.py

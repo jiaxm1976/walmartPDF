@@ -37,7 +37,7 @@ class OCREngine:
     def __init__(
         self,
         confidence_threshold: float = 0.25,
-        engine_type: str = None
+        engine_type: str = 'vision'
     ):
         """初始化OCR引擎.
 
@@ -47,9 +47,9 @@ class OCREngine:
         """
         logger.info("=" * 60)
         
-        # 从配置或参数获取引擎类型
-        self.engine_type = engine_type or settings.OCR_ENGINE
-        logger.info(f"初始化OCR引擎 ({self.engine_type})")
+        # 强制使用 Apple Vision，除非显式传入其他 engine_type
+        self.engine_type = engine_type
+        logger.info(f"初始化OCR引擎 (forced: {self.engine_type})")
         logger.info("=" * 60)
 
         self.confidence_threshold = confidence_threshold
@@ -78,11 +78,11 @@ class OCREngine:
             from Foundation import NSData, NSURL, NSMutableDictionary
             import objc
         except ImportError as e:
-            logger.error("Vision框架导入失败，自动回退到PaddleOCR引擎")
-            # Vision框架不可用时，自动回退到PaddleOCR引擎
-            self.engine_type = "paddleocr"
-            self._init_paddleocr_engine()
-            return
+            # 强制使用 Vision：若 Vision 不可用则抛出错误，明确要求运行在 macOS 并支持 Vision
+            logger.error("Vision 框架导入失败 —— 当前配置要求强制使用 Apple Vision。")
+            raise ImportError(
+                "Apple Vision 框架不可用。强制使用 Vision 模式失败。请在 macOS 环境安装或允许使用 Vision。"
+            )
 
         self.Vision = Vision
         self.CGImageSourceCreateWithData = CGImageSourceCreateWithData

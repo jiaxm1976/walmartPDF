@@ -144,10 +144,20 @@ class StructuredDataImporter:
             statement_id (成功) 或 None (失败)
         """
         try:
+            # 前置验证：输入有效性检查
+            if not isinstance(jg_structured_data, dict):
+                logger.error(f"✗ {pdf_name}: 输入格式错误 (期望 dict，得到 {type(jg_structured_data).__name__})")
+                return None
+            
             logger.info(f"开始导入: {pdf_name}")
             
             sections = jg_structured_data.get('sections', {})
             metadata = jg_structured_data.get('metadata', {})
+            
+            # 验证 sections 是否为字典类型
+            if not isinstance(sections, dict):
+                logger.error(f"✗ {pdf_name}: sections 字段必须为 dict，得到 {type(sections).__name__}")
+                return None
             
             if not sections:
                 logger.warning(f"⚠ {pdf_name}: 没有板块数据")
@@ -169,32 +179,65 @@ class StructuredDataImporter:
             logger.info(f"  ✓ 创建 statement 记录 (ID: {statement_id})")
             
             # Step 3: 为每个板块创建 section_data 记录
+            section_errors = []
             for section_name, items in sections.items():
-                # 将 items (list) 转换为 dict
-                section_dict = {item['field']: item['value'] for item in items}
+                try:
+                    # 数据结构验证：items 必须是列表
+                    if not isinstance(items, list):
+                        logger.error(f"  ✗ 板块'{section_name}': 数据格式错误（期望 list，得到 {type(items).__name__}）")
+                        section_errors.append(section_name)
+                        continue
+                    
+                    # 将 items (list) 转换为 dict
+                    try:
+                        section_dict = {item['field']: item['value'] for item in items}
+                    except (KeyError, TypeError) as e:
+                        logger.error(f"  ✗ 板块'{section_name}': 字段提取失败 ({e})")
+                        section_errors.append(section_name)
+                        continue
+                    
+                    # 右侧数据特殊处理：不进行低频字段合并（保留所有字段）
+                    if section_name == 'right_section':
+                        merged_dict = section_dict
+                        logger.debug(f"  右侧数据板块'{section_name}': 不进行字段合并，保留全部字段")
+                    else:
+                        # 其他板块进行低频字段合并
+                        merged_dict = self._merge_low_frequency_fields(
+                            section_name, section_dict, freq_map
+                        )
+                    
+                    # 写入 section_data 表
+                    success = self._insert_section_data(
+                        statement_id, section_name, merged_dict
+                    )
+                    
+                    if success:
+                        logger.info(f"  ✓ 板块'{section_name}': {len(merged_dict)} 个字段")
+                    else:
+                        logger.warning(f"  ⚠ 板块'{section_name}': 导入失败")
+                        section_errors.append(section_name)
                 
-                # 合并低频字段
-                merged_dict = self._merge_low_frequency_fields(
-                    section_name, section_dict, freq_map
-                )
-                
-                # 写入 section_data 表
-                success = self._insert_section_data(
-                    statement_id, section_name, merged_dict
-                )
-                
-                if success:
-                    logger.info(f"  ✓ 板块'{section_name}': {len(merged_dict)} 个字段")
-                else:
-                    logger.warning(f"  ⚠ 板块'{section_name}': 导入失败")
+                except Exception as e:
+                    logger.error(f"  ✗ 板块'{section_name}': 处理异常 ({e})")
+                    section_errors.append(section_name)
             
+            # 提交事务
             self.conn.commit()
-            logger.info(f"✓ {pdf_name} 导入完成\n")
+            
+            if section_errors:
+                logger.warning(f"⚠ {pdf_name} 导入部分完成，有 {len(section_errors)} 个板块失败: {section_errors}")
+            else:
+                logger.info(f"✓ {pdf_name} 导入完成\n")
+            
             return statement_id
         
         except Exception as e:
             logger.error(f"✗ {pdf_name} 导入失败: {e}")
-            self.conn.rollback()
+            try:
+                self.conn.rollback()
+                logger.info(f"  已执行事务回滚")
+            except Exception as rollback_err:
+                logger.error(f"  回滚失败: {rollback_err}")
             return None
     
     def _insert_statement(self, pdf_name: str, header_dict: Dict) -> Optional[int]:
