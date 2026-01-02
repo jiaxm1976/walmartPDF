@@ -23,10 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.database.structured_importer import StructuredDataImporter
 from backend.app.services.pdf_parser_service import PDFParserService
-<<<<<<< HEAD
 from backend.app.services.right_section_processor import RightSectionProcessor, merge_right_section_to_structured_data
-=======
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
 
 
 class BatchImportLogger:
@@ -99,7 +96,6 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
     """处理单个 PDF"""
     pdf_name = pdf_path.name
     
-<<<<<<< HEAD
 
     try:
         # Step 0: 检查是否已导入
@@ -126,32 +122,12 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
         # parse_pdf_direct 返回 left_section，需要从中提取 jg_structured_data
         left_section = parsed_data.get('left_section', {})
 
-=======
-    try:
-        # Step 1: 解析 PDF
-        logger.log(f'[1/3] 正在解析 PDF: {pdf_name}', 'DEBUG')
-        parser = PDFParserService()
-        result = parser.parse_pdf_direct(str(pdf_path))
-        
-        if not result.get('success'):
-            logger.log(f'PDF 解析失败: {result.get("error")}', 'ERROR')
-            return False, 0
-        
-        # Step 2: 获取结构化数据
-        logger.log(f'[2/3] 正在提取结构化数据...', 'DEBUG')
-        parsed_data = result.get('data', {})
-        
-        # parse_pdf_direct 返回 left_section，需要从中提取 jg_structured_data
-        left_section = parsed_data.get('left_section', {})
-        
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
         if not left_section:
             logger.log(f'解析结果中没有 left_section 数据', 'WARN')
             jg_data = {"sections": {"header": [], "footer": []}, "metadata": {}}
         else:
             # left_section 已经包含 jg_structured_data 格式的数据
             jg_data = left_section
-<<<<<<< HEAD
 
             if not isinstance(jg_data, dict) or 'sections' not in jg_data:
                 logger.log(f'结构化数据格式错误，使用默认结构', 'WARN')
@@ -177,26 +153,10 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
             logger.log(f'导入失败', 'ERROR')
             return False, 0
 
-=======
-            
-            if not isinstance(jg_data, dict) or 'sections' not in jg_data:
-                logger.log(f'结构化数据格式错误，使用默认结构', 'WARN')
-                jg_data = {"sections": {"header": [], "footer": []}, "metadata": {}}
-        
-        # Step 3: 导入到数据库
-        logger.log(f'[3/3] 正在导入到数据库...', 'DEBUG')
-        statement_id = importer.import_jg_data(pdf_name, jg_data)
-        
-        if statement_id is None:
-            logger.log(f'导入失败', 'ERROR')
-            return False, 0
-        
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
         # 统计板块数
         section_count = len(jg_data.get('sections', {}))
         logger.log(f'{pdf_name} → statement_id={statement_id}, 板块={section_count}', 'INFO')
         logger.add_record(pdf_name, statement_id, section_count)
-<<<<<<< HEAD
 
         return True, section_count
 
@@ -204,13 +164,6 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
         logger.log(f'{pdf_name} 处理失败: {e}', 'ERROR')
         import traceback
         logger.log(f'错误堆栈: {traceback.format_exc()}', 'DEBUG')
-=======
-        
-        return True, section_count
-        
-    except Exception as e:
-        logger.log(f'{pdf_name} 处理失败: {e}', 'ERROR')
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
         return False, 0
 
 
@@ -281,11 +234,7 @@ def main():
         
         # 处理每个 PDF
         print('\n' + '='*60)
-<<<<<<< HEAD
         logger.log(f'开始批量导入 {len(pdfs)} 个 PDF（包含左侧和右侧数据）...', 'INFO')
-=======
-        logger.log(f'开始批量导入 {len(pdfs)} 个 PDF...', 'INFO')
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
         print('='*60 + '\n')
         
         success_count = 0
@@ -330,7 +279,6 @@ def main():
     for section_name, count in db_info.get('section_distribution', {}).items():
         print(f'  • {section_name}: {count} 条')
     
-<<<<<<< HEAD
     # 验证右侧数据导入
     right_section_count = db_info.get('section_distribution', {}).get('right_section', 0)
     if right_section_count > 0:
@@ -346,8 +294,6 @@ def main():
   • 检查 parse_pdf_direct 是否返回 right_section 数据
 """)
     
-=======
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
     if logger.errors:
         print(f'\n⚠️  错误总结（{len(logger.errors)} 个）：')
         for error in logger.errors[:5]:  # 只显示前 5 个错误

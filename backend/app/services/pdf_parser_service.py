@@ -113,7 +113,6 @@ class PDFParserService:
             left_processor = get_left_image_processor()
             left_data = left_processor.process_left_image(left_image, dpi=self.dpi)
             
-<<<<<<< HEAD
             # Step 4: 右侧OCR识别（仅传右侧图像；OCR 引擎在 RightSectionOCR 内部初始化）
             logger.info("Step 4: 右侧OCR识别...")
             try:
@@ -125,12 +124,6 @@ class PDFParserService:
             except Exception as e:
                 logger.warning(f"⚠ 右侧 OCR 识别失败，已跳过右侧数据: {e}")
                 right_data = {}
-=======
-            # 适配新的板块结构化数据格式
-            section_count = left_data.get("metadata", {}).get("section_count", 0)
-            detail_count = left_data.get("metadata", {}).get("detail_count", 0)
-            logger.info(f"  ✓ 提取到 {section_count} 个板块，{detail_count} 个明细项")
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
 
             
             # 适配新的板块结构化数据格式

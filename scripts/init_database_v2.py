@@ -139,7 +139,6 @@ def verify_schema():
         return False
 
 
-<<<<<<< HEAD
 def init_right_section():
     """初始化右侧数据字段频率"""
     try:
@@ -191,8 +190,6 @@ def init_right_section():
         return False
 
 
-=======
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
 def main():
     """主流程"""
     print("""
@@ -206,7 +203,6 @@ def main():
         log('开始 Phase 2 数据库初始化...', 'INFO')
         
         # 步骤 1: 备份
-<<<<<<< HEAD
         log('步骤 1/5: 备份现有数据库', 'INFO')
         backup_path = backup_database()
         
@@ -225,21 +221,6 @@ def main():
         
         # 步骤 5: 验证
         log('步骤 5/5: 验证表结构与右侧数据', 'INFO')
-=======
-        log('步骤 1/4: 备份现有数据库', 'INFO')
-        backup_path = backup_database()
-        
-        # 步骤 2: 删除
-        log('步骤 2/4: 删除旧数据库', 'INFO')
-        delete_database()
-        
-        # 步骤 3: 初始化
-        log('步骤 3/4: 执行 schema 初始化', 'INFO')
-        init_schema()
-        
-        # 步骤 4: 验证
-        log('步骤 4/4: 验证表结构', 'INFO')
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
         if not verify_schema():
             raise RuntimeError('schema 验证失败')
         
@@ -252,27 +233,20 @@ def main():
   ✓ 数据库已清空并重建
   ✓ Schema V2 已初始化
   ✓ 所有表与视图已创建
-<<<<<<< HEAD
   ✓ field_frequency 已填充 40 个字段（基础 31 个 + 右侧 9 个）
   ✓ 右侧数据板块已初始化
-=======
-  ✓ field_frequency 已填充 31 个字段
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
 
 📍 数据库位置: {DB_PATH}
 
 🔄 备份信息:
   {f'✓ 已备份至: {backup_path}' if backup_path else '⚠ 无备份'}
 
-<<<<<<< HEAD
 🔧 右侧数据说明：
   • 板块名: 'right_section'
   • 字段数: 9 个
   • 存储位置: section_data 表
   • 特点: 所有字段都被视为高频字段（不会被合并到 _其他）
 
-=======
->>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
 🚀 下一步 (Phase 3): 单 PDF 导入测试
   python scripts/test_single_pdf_import.py
 
