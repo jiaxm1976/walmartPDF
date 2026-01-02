@@ -38,6 +38,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+<<<<<<< HEAD
 # NOTE: This script referenced `backend/database/schema_design_v1.sql` (v1 schema).
 # The repository now uses the V2 dynamic schema. This script has been archived
 # to `archived/scripts/db_import_new_structure.py`. To avoid accidental execution,
@@ -46,6 +47,8 @@ logger.info('db_import_new_structure has been archived; use scripts/batch_import
 import sys
 sys.exit(0)
 
+=======
+>>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
 # 项目路径
 PROJECT_ROOT = Path(__file__).parent.parent
 DB_PATH = PROJECT_ROOT / 'backend' / 'data' / 'walmart_pdf_parser.db'

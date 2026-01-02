@@ -4,6 +4,7 @@
 **难度**: ⭐ 简单  
 **前置条件**: Python 3.9+，SQLite3
 
+<<<<<<< HEAD
 > 注意：仓库文档已分层管理——最新的运行与调试指南放在 `.claude/IMPORT_SERVER_DOCS.md`，旧版参考和历史设计文档已移入 `archived/` 目录，以免误用旧流程。
 
 最新运行文档：
@@ -11,6 +12,8 @@
 - [导入服务文档（最新）](.claude/IMPORT_SERVER_DOCS.md)
 
 
+=======
+>>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
 ---
 
 ## ⚡ 30 秒快速开始
@@ -193,6 +196,7 @@ importer.disconnect()
 ```bash
 python scripts/init_database_v2.py
 ```
+<<<<<<< HEAD
 
 
 ---
@@ -221,3 +225,5 @@ python scripts/init_database_v2.py
 - `.claude/archive/` — 历史设计说明与实现文档（保留变更记录）
 
 如需查看历史版本，请在上述目录中检索；开发/运行请优先参考顶部的“导入服务文档（最新）”。
+=======
+>>>>>>> 28b8e1f6342da6913199c0551ceba7975bdf3a7b
