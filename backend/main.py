@@ -11,8 +11,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-from database.config import init_database
-from app.api.v1 import api_router
+try:
+    from backend.database.config import init_database
+except Exception:
+    from database.config import init_database
+try:
+    # 优先尝试以包名方式导入（通过 `import backend.main` 时生效）
+    from backend.app.api.v2 import api_router as api_v2_router
+except Exception:
+    try:
+        # 回退到原始的相对运行时导入方式（通过直接运行 main.py 时生效）
+        from app.api.v2 import api_router as api_v2_router
+    except Exception:
+        api_v2_router = None
 
 # 配置日志
 logging.basicConfig(
@@ -84,7 +95,9 @@ async def health_check():
 
 
 # 注册API路由
-app.include_router(api_router, prefix="/api/v1")
+if api_v2_router is not None:
+    # 挂载 /api/v2 路由（若 v2 已就位）
+    app.include_router(api_v2_router, prefix="/api/v2")
 
 
 if __name__ == "__main__":
