@@ -196,15 +196,9 @@ class StructuredDataImporter:
                         section_errors.append(section_name)
                         continue
                     
-                    # 右侧数据特殊处理：不进行低频字段合并（保留所有字段）
-                    if section_name == 'right_section':
-                        merged_dict = section_dict
-                        logger.debug(f"  右侧数据板块'{section_name}': 不进行字段合并，保留全部字段")
-                    else:
-                        # 其他板块进行低频字段合并
-                        merged_dict = self._merge_low_frequency_fields(
-                            section_name, section_dict, freq_map
-                        )
+                    # 所有板块均保留原始字段（禁用低频字段合并）
+                    merged_dict = section_dict
+                    logger.debug(f"  板块'{section_name}': 保留全部字段（已禁用低频字段合并）")
                     
                     # 写入 section_data 表
                     success = self._insert_section_data(

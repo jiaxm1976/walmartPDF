@@ -115,7 +115,7 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
             logger.log(f'PDF 解析失败: {result.get("error")}', 'ERROR')
             return False, 0
 
-        # Step 2: 获取结构化数据（左侧）
+        # Step 2: 获取结构化数据（左侧/右侧优先使用 parser 返回的数据）
         logger.log(f'[2/4] 正在提取左侧结构化数据...', 'DEBUG')
         parsed_data = result.get('data', {})
 
@@ -136,10 +136,20 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
         # Step 3: 提取并处理右侧数据
         logger.log(f'[3/4] 正在提取右侧数据...', 'DEBUG')
         right_processor = RightSectionProcessor()
-        right_section = right_processor.extract_right_section(parsed_data)
-        
+        # 优先使用 parse_pdf_direct 已返回的 right_section（若有）
+        right_section = parsed_data.get('right_section')
+
+        # 若 parser 没有返回，则回退到基于 OCR 的抽取器
+        if not right_section:
+            right_section = right_processor.extract_right_section(parsed_data)
+
         if right_section and right_processor.validate_right_section_data(right_section):
-            formatted_right = right_processor.format_right_section_for_db(right_section)
+            # 兼容 parse_pdf_direct 返回的已格式化结构或需要格式化的原始结构
+            if isinstance(right_section, dict) and right_section.get('formatted'):
+                formatted_right = right_section['formatted']
+            else:
+                formatted_right = right_processor.format_right_section_for_db(right_section)
+
             jg_data = merge_right_section_to_structured_data(jg_data, formatted_right)
             logger.log(f'✓ 右侧数据提取成功 ({len(formatted_right)} 个字段)', 'DEBUG')
         else:
