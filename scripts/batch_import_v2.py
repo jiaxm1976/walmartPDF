@@ -111,7 +111,9 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
         parser = PDFParserService()
         result = parser.parse_pdf_direct(str(pdf_path))
 
-        if not result.get('success'):
+        # 兼容 parse_pdf_direct 的返回格式：
+        # 服务端返回示例: {"status": "SUCCESS"/"ERROR", "data": ..., "error": ...}
+        if result.get('status') != 'SUCCESS':
             logger.log(f'PDF 解析失败: {result.get("error")}', 'ERROR')
             return False, 0
 
@@ -119,18 +121,23 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
         logger.log(f'[2/4] 正在提取左侧结构化数据...', 'DEBUG')
         parsed_data = result.get('data', {})
 
-        # parse_pdf_direct 返回 left_section，需要从中提取 jg_structured_data
-        left_section = parsed_data.get('left_section', {})
+        # 兼容两种 data 结构：
+        # 1) { 'left_section': {...}, 'right_section': {...} }
+        # 2) 直接返回 jg_structured_data（顶层包含 'sections'）
+        if isinstance(parsed_data, dict) and 'left_section' in parsed_data:
+            left_section = parsed_data.get('left_section', {})
+        else:
+            left_section = parsed_data or {}
 
         if not left_section:
-            logger.log(f'解析结果中没有 left_section 数据', 'WARN')
+            logger.log(f'解析结果中没有 left_section 数据，使用默认结构', 'WARN')
             jg_data = {"sections": {"header": [], "footer": []}, "metadata": {}}
         else:
-            # left_section 已经包含 jg_structured_data 格式的数据
+            # left_section 已经包含或等同于 jg_structured_data 格式的数据
             jg_data = left_section
 
             if not isinstance(jg_data, dict) or 'sections' not in jg_data:
-                logger.log(f'结构化数据格式错误，使用默认结构', 'WARN')
+                logger.log(f'结构化数据格式未包含 sections，使用默认结构', 'WARN')
                 jg_data = {"sections": {"header": [], "footer": []}, "metadata": {}}
 
         # Step 3: 提取并处理右侧数据

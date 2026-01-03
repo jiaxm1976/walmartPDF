@@ -1,3 +1,8 @@
+from fastapi import APIRouter
+
+from .routes import router as api_router
+
+__all__ = ["api_router"]
 # ============================================================
 # 文件: backend/app/api/v2/__init__.py
 # 功能: API v2 路由汇总（骨架）

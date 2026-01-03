@@ -64,3 +64,10 @@ htmlcov/
 *.tmp
 frontend/
 archived/
+backend/data/backups/walmart_pdf_parser_20260102_210057.db
+backend/data/backups/walmart_pdf_parser_20260102_231513.db
+backend/tests/integration/test_api_v2_import.py
+backend/tests/integration/test_api_v2_statement_detail.py
+backend/tests/integration/test_api_v2_statements.py
+backend/tests/integration/test_api_v2.py
+backend/tests/unit/test_dependencies.py

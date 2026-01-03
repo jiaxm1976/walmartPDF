@@ -126,17 +126,35 @@ class PDFParserService:
                 right_data = {}
 
             
-            # 适配新的板块结构化数据格式
+            # 适配新的板块结构化数据格式，并兼容老的 jg_structured_data 格式
             section_count = left_data.get("metadata", {}).get("section_count", 0)
             detail_count = left_data.get("metadata", {}).get("detail_count", 0)
             logger.info(f"  ✓ 提取到 {section_count} 个板块，{detail_count} 个明细项")
 
-           
-            # 整合数据
-            result_data = {
-                "left_section": left_data,
-                "right_section": right_data
-            }
+            # 将右侧数据并入 sections，保持向后兼容（sections: { ..., 'right_section': [...] }）
+            jg_data = left_data.copy()
+            # 确保 sections 字段存在
+            if "sections" not in jg_data:
+                jg_data["sections"] = {}
+
+            # 将 right_data（dict）转换为列表形式以匹配导入器期望的 items 列表
+            right_items = []
+            if isinstance(right_data, dict):
+                for k, v in right_data.items():
+                    right_items.append({"field": k, "value": v, "raw": str(v)})
+
+            jg_data["sections"]["right_section"] = right_items
+
+            # 更新 metadata 统计
+            try:
+                jg_data.setdefault("metadata", {})
+                jg_data["metadata"]["section_count"] = len(jg_data["sections"])
+                jg_data["metadata"]["detail_count"] = sum(len(v) for v in jg_data["sections"].values())
+            except Exception:
+                pass
+
+            # 返回兼容旧测试的格式：包含 status='SUCCESS' 和 data 字段
+            result_data = jg_data
 
             # 保存中间结果（可选）
             if output_dir:
@@ -159,9 +177,15 @@ class PDFParserService:
             logger.info(f"✅ PDF直接解析完成！耗时: {process_time:.2f}秒")
             logger.info("=" * 60)
 
+            # 返回兼容格式：保留 status，同时新增 success 布尔，
+            # 并且将 data 包装为 { left_section: ..., right_section: ... }
             return {
+                "status": "SUCCESS",
                 "success": True,
-                "data": result_data,
+                "data": {
+                    "left_section": result_data,
+                    "right_section": right_data if isinstance(right_data, dict) else {}
+                },
                 "error": None,
                 "process_time": process_time
             }
@@ -178,6 +202,7 @@ class PDFParserService:
             traceback.print_exc()
 
             return {
+                "status": "ERROR",
                 "success": False,
                 "data": None,
                 "error": str(e),
