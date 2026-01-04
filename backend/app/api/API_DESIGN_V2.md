@@ -50,3 +50,54 @@
 - 超时：导入 30s, 分析 60s
 
 完整设计文档见 `.claude/API_DEVELOPMENT_ROADMAP.md` 和 `API_SECURITY_GUIDELINES.md`
+
+## /parse 与 /import 端点示例（快速参考）
+
+下面示例以 v2 路由为准：`/api/v2/parse` 返回解析预览（不写库），`/api/v2/import` 负责将解析结果写入数据库并返回导入结果。
+
+- POST /api/v2/parse
+
+	请求示例 (JSON):
+
+	{
+		"pdf_path": "backend/tests/test_data/sample_statement.pdf",
+		"output_dir": null
+	}
+
+	成功响应示例 (200, ParseResult):
+
+	{
+		"status": "SUCCESS",
+		"success": true,
+		"data": {
+			"sections": {
+				"header": [{"field": "统计区间", "value": "2025-12-01 - 2025-12-31"}],
+				"right_section": [{"field": "待付款金额", "value": "$1,234.56", "raw": "$1,234.56"}]
+			},
+			"metadata": {"source": "parser"}
+		},
+		"right_section_raw": {"待付款金额": "$1,234.56"},
+		"error": null,
+		"process_time": 0.45
+	}
+
+- POST /api/v2/import
+
+	请求示例 (JSON):
+
+	{
+		"pdf_path": "backend/tests/test_data/sample_statement.pdf"
+	}
+
+	成功响应示例 (200, ImportResult):
+
+	{
+		"success": true,
+		"statement_id": 123,
+		"message": "imported"
+	}
+
+说明：
+- 使用 `/parse` 进行预览与人工校验；确认无误后再调用 `/import` 写入数据库。
+- `/import` 内部在可能时会先以 `JGData`（Pydantic）验证解析结构，并优先调用 `import_from_model` 返回 `ImportResult`；若验证失败则回退为 `import_jg_data` 的兼容路径。
+

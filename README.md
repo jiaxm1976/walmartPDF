@@ -59,6 +59,10 @@ npm start
 | [导入服务](/.claude/IMPORT_SERVER_DOCS.md) | PDF 导入、OCR、数据库存储 |
 | [数据库设计](/.claude/DATABASE_V2_COMPLETE_SUMMARY.md) | 表结构、关系、查询优化 |
 
+### 流程图
+
+- [ASCII 流程图 (文本)](docs/flow_ascii.txt) — 项目内部快速查看调用关系与数据流。
+
 ---
 
 ## 🏗️ 项目结构
@@ -139,6 +143,36 @@ walmart-a/
 ```http
 # 健康检查
 GET /api/v2/health
+## API 调用示例（curl）
+
+开发/前端快速测试可使用以下 curl 示例或项目内脚本 `scripts/api_examples.sh`。
+
+注意：`/api/v2/import` 会写入数据库，请仅在开发/测试环境运行。
+
+示例：调用解析预览 `/api/v2/parse`
+
+```bash
+curl -X POST http://localhost:8000/api/v2/parse \
+	-H "Content-Type: application/json" \
+	-d '{"pdf_path": "backend/tests/test_data/sample_statement.pdf", "output_dir": null}'
+```
+
+示例：调用同步导入 `/api/v2/import`
+
+```bash
+curl -X POST http://localhost:8000/api/v2/import \
+	-H "Content-Type: application/json" \
+	-d '{"pdf_path": "backend/tests/test_data/sample_statement.pdf"}'
+```
+
+或使用仓库内准备的脚本（会自动美化输出）：
+
+```bash
+chmod +x scripts/api_examples.sh
+./scripts/api_examples.sh parse
+./scripts/api_examples.sh import
+```
+
 
 # 查看所有 Statements
 GET /api/v2/statements?page=1&size=20

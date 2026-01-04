@@ -9,7 +9,7 @@
 import logging
 import re
 import json
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, Union
 from pathlib import Path
 import cv2
 import numpy as np
@@ -79,8 +79,56 @@ class RightSectionOCR:
         logger.info("====================================\n")
         
         return text_blocks
+
+    def ocr_recognize(self, image: np.ndarray) -> Dict[str, Any]:
+        """
+        兼容层：调用底层 OCR 引擎并返回统一的字典格式：
+        {'text_lines': [ { 'text': str, 'bbox': [x1,y1,x2,y2], 'confidence': float, 'vertical_center': float }, ... ]}
+        本方法便于单元测试 patch() 替换。
+        """
+        try:
+            # 优先使用 recognize_image（返回带坐标和置信度的结构）
+            results = self.ocr_engine.recognize_image(image)
+        except Exception:
+            try:
+                # 退回到简单识别方法
+                results = self.ocr_engine.recognize_image_text(image)
+            except Exception:
+                return {'text_lines': []}
+
+        # 标准化返回
+        text_lines = []
+        try:
+            # recognize_image 可能返回 list of (box, (text, confidence))
+            if isinstance(results, list):
+                for box, (text, confidence) in results:
+                    try:
+                        bbox = [int(box[0][0]), int(box[0][1]), int(box[2][0]), int(box[2][1])]
+                    except Exception:
+                        # fallback if box is simple list
+                        bbox = list(box) if isinstance(box, (list, tuple)) else []
+                    try:
+                        vertical_center = (bbox[1] + bbox[3]) / 2 if bbox else None
+                    except Exception:
+                        vertical_center = None
+                    text_lines.append({
+                        'text': text,
+                        'bbox': bbox,
+                        'confidence': float(confidence) if confidence is not None else None,
+                        'vertical_center': vertical_center
+                    })
+            elif isinstance(results, dict) and 'text_lines' in results:
+                # already in expected format
+                text_lines = results['text_lines']
+            else:
+                # unexpected format
+                return {'text_lines': []}
+        except Exception:
+            return {'text_lines': []}
+
+        return {'text_lines': text_lines}
         
-    def extract_text_lines(self, image: np.ndarray) -> List[Tuple[str, float]]:
+    def extract_text_lines(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """从图片中提取文本行.
 
         OCR可能将同一行文本分成多个块（如标签和值分开）。
@@ -93,77 +141,51 @@ class RightSectionOCR:
             List[Tuple[str, float]]: 文本行列表 [(文本, Y坐标), ...]
                 按Y坐标从上到下排序
         """
-        # OCR识别
-        ocr_results = self.ocr_engine.recognize_image(image)
-        
-        # 输出recognize_image函数的返回值
-        logger.info("\n===== recognize_image函数返回值 =====")
-        logger.info(f"OCR结果数量: {len(ocr_results)}")
-        for i, (box, (text, confidence)) in enumerate(ocr_results):
-            logger.info(f"结果 {i+1}:")
-            logger.info(f"  文本: {text}")
-            logger.info(f"  置信度: {confidence:.2f}")
-            logger.info(f"  坐标框: {box}")
-        logger.info("====================================\n")
-        
-        # 使用text_formatter中的merge_text_blocks函数合并文本块
-        merged_text, text_infos = merge_text_blocks(ocr_results, y_tolerance=15)
+        # 使用兼容的 OCR 接口获取结果（便于测试 patch）
+        try:
+            ocr_out = self.ocr_recognize(image)
+        except Exception as e:
+            logger.warning(f"OCR 识别失败: {e}")
+            return []
 
-        # 将合并后的文本字符串转换为List[Tuple[str, float]]格式
-        text_lines = []
-        if merged_text:
-            lines = merged_text.split('\n')
+        if not ocr_out or not isinstance(ocr_out, dict):
+            return []
 
-            # 尝试从 text_infos 提取 center_y 列表；如果不可用，则从原始 ocr_results 计算中心Y作为备用
-            centers = []
+        lines = ocr_out.get('text_lines', [])
+        result_lines = []
+
+        for item in lines:
             try:
-                if isinstance(text_infos, list) and text_infos:
-                    centers = [getattr(info, 'center_y') for info in text_infos if hasattr(info, 'center_y')]
+                if isinstance(item, dict):
+                    text = item.get('text', '').strip()
+                    bbox = item.get('bbox')
+                    vc = item.get('vertical_center')
+                    conf = item.get('confidence')
+                    # ensure keys exist
+                    entry = {
+                        'text': text,
+                        'bbox': bbox,
+                        'confidence': conf,
+                        'vertical_center': vc
+                    }
+                    result_lines.append(entry)
+                elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                    # e.g., (text, y)
+                    text = item[0]
+                    vc = item[1]
+                    result_lines.append({'text': str(text), 'vertical_center': float(vc)})
+                else:
+                    # unknown format, skip
+                    continue
             except Exception:
-                centers = []
+                continue
 
-            # 备用：从 ocr_results 计算每个原始文本块的 center_y
-            if not centers and ocr_results:
-                try:
-                    alt_centers = []
-                    for box, (_t, _c) in ocr_results:
-                        try:
-                            cy = (box[0][1] + box[2][1]) / 2
-                            alt_centers.append(float(cy))
-                        except Exception:
-                            continue
-                    if alt_centers:
-                        centers = alt_centers
-                except Exception:
-                    centers = []
-
-            for idx, line in enumerate(lines):
-                if line.strip():
-                    # 解析每行的文本块，格式为：'文本1','文本2','文本3'
-                    text_blocks = line.split(',')
-                    # 移除单引号并合并为一个字符串
-                    merged_line_text = ' '.join([tb.strip().strip("'") for tb in text_blocks])
-
-                    # 计算该行的Y坐标：优先使用 centers 列表对应索引，否则退回到行索引
-                    try:
-                        if centers and idx < len(centers):
-                            line_y = float(centers[idx])
-                        else:
-                            line_y = float(idx)
-                    except Exception:
-                        line_y = float(idx)
-
-                    text_lines.append((merged_line_text, line_y))
-        
-        # 按Y坐标排序
-        text_lines.sort(key=lambda x: x[1])
-        
-        return text_lines
+        return result_lines
 
 
     def extract_payment_details(
         self,
-        text_lines: List[Tuple[str, float]]
+        text_lines: List[Union[Dict[str, Any], Tuple[Any, float], str]]
     ) -> Dict[str, str]:
         """从文本行中提取付款详情键值对.
 
@@ -198,7 +220,20 @@ class RightSectionOCR:
         }
 
         while i < len(text_lines):
-            text = text_lines[i][0].strip()
+            # 支持多种输入格式：dict({'text':...}), tuple (text, y), 或简单字符串
+            cur = text_lines[i]
+            if isinstance(cur, dict):
+                text = str(cur.get('text', '')).strip()
+                bbox = cur.get('bbox')
+                vertical_center = cur.get('vertical_center')
+            elif isinstance(cur, (list, tuple)) and len(cur) >= 1:
+                text = str(cur[0]).strip()
+                vertical_center = cur[1] if len(cur) > 1 else None
+                bbox = None
+            else:
+                # 非标准格式，跳过
+                i += 1
+                continue
 
             # 跳过标题行（"付款详情"）
             if text in ['付款详情', 'Payment Details']:
@@ -224,7 +259,13 @@ class RightSectionOCR:
                 if text in field_name_mapping.keys():
                     # 查找下一行的值
                     if i + 1 < len(text_lines):
-                        next_text = text_lines[i + 1][0].strip()
+                        nxt = text_lines[i + 1]
+                        if isinstance(nxt, dict):
+                            next_text = str(nxt.get('text', '')).strip()
+                        elif isinstance(nxt, (list, tuple)) and len(nxt) >= 1:
+                            next_text = str(nxt[0]).strip()
+                        else:
+                            next_text = ''
                         # 规范化字段名
                         normalized_field = field_name_mapping[text]
                         data[normalized_field] = next_text
@@ -272,8 +313,21 @@ class RightSectionOCR:
 
         return result
 
+    def process_right_section(self, image: np.ndarray) -> Dict[str, Any]:
+        """
+        兼容方法：处理右侧图片并直接返回键值对字典（供测试使用）。
+        返回格式：{ '状态': '...', '付款日期': '...' }
+        """
+        try:
+            text_lines = self.extract_text_lines(image)
+            details = self.extract_payment_details(text_lines)
+            return details
+        except Exception as e:
+            logger.error(f"处理右侧板块失败: {e}")
+            return {}
 
-    def save_json(self, data: Dict[str, Any], output_path: str):
+
+    def save_json(self, data: Dict[str, Any], output_path: str) -> None:
         """保存JSON数据到文件.
 
         Args:

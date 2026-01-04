@@ -47,6 +47,17 @@ pip install scipy
 ```
 
 注意：仓库脚本已兼容 legacy `venv`（回退），但建议统一使用 `.venv`。如需清理遗留的 `venv`，可运行 `scripts/remove_legacy_venv.sh`。
+
+重要：虚拟环境为本项目标配
+- **原因**: 隔离依赖、避免系统包冲突、便于本地/CI 环境一致性。
+- **推荐做法**: 在项目根创建并激活 `.venv`，随后使用该环境安装依赖并运行脚本与测试。
+- **快速命令**:
+```
+python -m venv .venv
+source .venv/bin/activate  # macOS / Linux
+pip install -r backend/requirements.txt
+```
+将虚拟环境加入项目开发规范有助于减少环境相关的测试失败（例如缺少本地 OCR 绑定或模块导入错误）。
 ### 3. 测试环境
 ```bash
 # 运行测试脚本

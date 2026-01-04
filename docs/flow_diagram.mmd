@@ -1,0 +1,15 @@
+%% Mermaid flowchart for PDF parsing and import pipeline
+flowchart TD
+  A[PDF file] --> B[PDFParserService.parse_pdf_direct(pdf_path)]
+  B --> C1[pdf_to_images()]
+  B --> C2[KeywordLocator.split_horizontal()]
+  C2 --> D_left[left_image]
+  C2 --> D_right[right_image]
+  D_left --> E1[LeftImageProcessor.process_left_image()\n→ left_data (jg_structured_data)]
+  D_right --> E2[RightSectionOCR.process_right_image()\n→ payment_details dict]
+  E2 --> F[RightSectionProcessor.format_right_section_for_db()\n→ cleaned right dict]
+  E1 --> G[merge right into jg_data.sections.right_section]
+  F --> G
+  G --> H[StructuredDataImporter.import_jg_data(pdf_name, jg_data)]
+  H --> I[DB: statements / section_data]
+  I --> J[verify_database() → report]

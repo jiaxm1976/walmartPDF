@@ -1,3 +1,8 @@
+# ---
+# name: dbinit
+# title: "dbinit — 数据库初始化 Skill"
+# ---
+
 # dbinit — 数据库初始化 Skill
 
 简述

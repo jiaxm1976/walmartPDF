@@ -21,12 +21,15 @@ from .dependencies import get_current_user
 # 解析器与导入器：项目中已有的功能模块，路由调用它们组成完整流程
 from backend.app.services.pdf_parser import parse_pdf_file
 from backend.database.structured_importer import StructuredDataImporter
+from backend.app.schemas.v2 import JGData, ImportResult
 from backend.database.config import get_db
 from backend.database import models
 from .schemas import StatementSummary, StatementsListResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from fastapi import HTTPException
+from backend.app.services.pdf_parser_service import PDFParserService
+from backend.app.schemas.v2 import ParseResult
 
 
 router = APIRouter()
@@ -43,7 +46,20 @@ async def v2_health_check():
 
 
 
-@router.post("/import", response_model=ImportResponse, tags=["Import"])
+@router.post(
+    "/import",
+    response_model=ImportResult,
+    tags=["Import"],
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "example": {"success": True, "statement_id": 123, "message": "imported"}
+                }
+            }
+        }
+    },
+)
 def import_pdf(request: ImportRequest, user: Dict[str, Any] = Depends(get_current_user)):
     """同步导入示例端点（最小实现，便于初学者理解）
 
@@ -74,7 +90,7 @@ def import_pdf(request: ImportRequest, user: Dict[str, Any] = Depends(get_curren
         parsed = parse_pdf_file(pdf_path)
     except Exception as e:
         # 解析失败时返回错误信息（真实场景可记录日志并返回更多上下文）
-        return ImportResponse(success=False, message=f"parse error: {e}", result=None)
+        return ImportResult(success=False, statement_id=None, message=f"parse error: {e}")
 
     # ----------------
     # 3. 将解析结果转换为导入器期望的结构（示例）
@@ -105,15 +121,68 @@ def import_pdf(request: ImportRequest, user: Dict[str, Any] = Depends(get_curren
     importer = StructuredDataImporter()
     try:
         importer.connect()
-        statement_id = importer.import_jg_data(parsed.get('file_name', 'unknown.pdf'), jg_structured_data)
+        # 尝试先用 JGData 验证并使用 import_from_model
+        try:
+            jg_model = JGData.model_validate(jg_structured_data)
+            import_res: ImportResult = importer.import_from_model(parsed.get('file_name', 'unknown.pdf'), jg_model)
+        except Exception:
+            # 验证失败，回退到原始导入方法
+            statement_id = importer.import_jg_data(parsed.get('file_name', 'unknown.pdf'), jg_structured_data)
+            import_res = ImportResult(success=bool(statement_id), statement_id=statement_id, message="imported" if statement_id else "import failed")
     finally:
         importer.disconnect()
 
-    if not statement_id:
-        return ImportResponse(success=False, message="import failed", result={'statement_id': None})
+    return import_res
 
-    # 成功返回：包含 statement_id 和解析周期（供调用方参考）
-    return ImportResponse(success=True, message="imported", result={'statement_id': statement_id, 'period': period})
+
+
+@router.post(
+    "/parse",
+    response_model=ParseResult,
+    tags=["Parse"],
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": "SUCCESS",
+                        "success": True,
+                        "data": {
+                            "sections": {
+                                "header": [{"field": "统计区间", "value": "2025-12-01 - 2025-12-31"}],
+                                "right_section": [{"field": "待付款金额", "value": "$1,234.56", "raw": "$1,234.56"}]
+                            },
+                            "metadata": {"source": "parser"}
+                        },
+                        "right_section_raw": {"待付款金额": "$1,234.56"},
+                        "error": None,
+                        "process_time": 0.45
+                    }
+                }
+            }
+        }
+    },
+)
+def parse_pdf_endpoint(request: ImportRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    """直接解析 PDF 并返回解析结果（ParseResult）。
+
+    用途：调试和前端预览解析结果，随后可调用 /import 将数据写入数据库。
+    """
+    parser = PDFParserService()
+    result = parser.parse_pdf_direct(request.pdf_path, output_dir=request.output_dir)
+    try:
+        parsed = ParseResult.model_validate(result)
+        return parsed
+    except Exception as e:
+        # 验证失败时返回错误结构，避免抛出 500
+        return ParseResult.model_validate({
+            "status": "ERROR",
+            "success": False,
+            "data": None,
+            "right_section_raw": {},
+            "error": f"validation error: {e}",
+            "process_time": result.get("process_time") if isinstance(result, dict) else None,
+        })
 
 
 @router.get("/statements", response_model=StatementsListResponse, tags=["Statements"])

@@ -1,0 +1,81 @@
+ASCII 流程图（自上而下，包含文件与方法）
+
+╔════════════════════════════════════════════════════════════════╗
+║ 脚本入口：批量导入（scripts/batch_import_v2.py）             ║
+╚════════════════════════════════════════════════════════════════╝
+                              │
+                              ▼
+╔════════════════════════════════════════════════════════════════╗
+║ 解析服务：PDFParserService.parse_pdf_direct(pdf_path)         ║
+║ 文件：backend/app/services/pdf_parser_service.py             ║
+╚════════════════════════════════════════════════════════════════╝
+            ┌──────────────┬───────────────────────┐
+            │              │                       │
+            ▼              ▼                       ▼
+  pdf_to_images()   KeywordLocator.split_horizontal()   images
+      (图片列表)           (左右分割)                    （left/right）
+            │              │                       │
+            ▼              ▼                       ▼
+    left_image             right_image
+      │                     │
+      ▼                     ▼
+╔════════════════╗     ╔════════════════════════════════╗
+║ LeftImageProcessor ║   ║ RightSectionOCR.process_right_image ║
+║ get_left_image_processor.process_left_image  ║   ║ backend/app/services/right_section_ocr.py ║
+║ → left_data (jg_structured_data 风格)  ║   ║ → right_raw_dict (payment_details)   ║
+╚════════════════╝     ╚════════════════════════════════╝
+      │                     │
+      └───────────┬─────────┘
+                  ▼
+        合并为 jg_data（sections + metadata）
+        - sections: { header:[{field,value},...], ..., right_section:[{field,value},...] }
+        - metadata: { section_count, detail_count, ... }
+                  │
+                  ▼
+╔════════════════════════════════════════════════════════════════╗
+║ 脚本接收 ParseResult / data 并做右侧兼容处理                 ║
+║ 使用 RightSectionProcessor.extract_right_section(...)      ║
+║ 文件：backend/app/services/right_section_processor.py      ║
+╚════════════════════════════════════════════════════════════════╝
+                  │
+                  ▼
+╔════════════════════════════════════════════════════════════════╗
+║ 导入器：StructuredDataImporter.import_jg_data(pdf_name, jg_data) ║
+║ 文件：backend/database/structured_importer.py               ║
+║ （当前脚本会直接用 importer.conn 检查，建议改为 exists()）  ║
+╚════════════════════════════════════════════════════════════════╝
+                              │
+                              ▼
+                     写入数据库：
+                     - statements（header → 返回 statement_id）
+                     - section_data（每个 section 的 JSON）
+                              │
+                              ▼
+                     验证/报告（verify_database）
+
+
+关键数据结构（简洁）
+- ParseResult（脚本期望）:
+  - status: "SUCCESS" | "ERROR"
+  - data: { left_section: JGStructuredData, right_section: dict }
+  - error, process_time
+- JGStructuredData:
+  - sections: Dict[str, List[Item]]
+    - Item: { field: str, value: Any, raw?: str }
+  - metadata: Dict（可选）
+- 右侧流程：
+  - RightSectionOCR 输出: { "payment_details": {...} }
+  - RightSectionProcessor 输出: 清洗字典 → 转为 sections['right_section'] 列表项
+
+关键耦合点（一句话）
+- 脚本直接读 importer.conn、解析返回格式不统一、右侧处理有重复路径 —— 都应在服务层统一封装。
+
+立即可做（优先项）
+- 在 StructuredDataImporter 中添加 exists(pdf_name) -> bool 并替换脚本中直接 SQL 检查，快速降低耦合。
+
+下一步建议
+- 若需要，我可以：
+  1) 把此 ASCII 图插入 README 或 docs 的指定位置；
+  2) 直接实现 StructuredDataImporter.exists() 并提交小补丁；
+  3) 生成 Mermaid 源码以便渲染图像。
+

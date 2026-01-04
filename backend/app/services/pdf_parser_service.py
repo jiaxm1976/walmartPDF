@@ -14,6 +14,7 @@ from backend.app.services.left_image_processor_service import get_left_image_pro
 from backend.app.utils.image_utils import pdf_to_images
 from backend.app.services.ocr_engine import OCREngine
 from backend.app.services.right_section_ocr import RightSectionOCR
+from backend.app.schemas.v2 import ParseResult, JGData
 
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,7 @@ class PDFParserService:
             except Exception:
                 pass
 
-            # 返回兼容旧测试的格式：包含 status='SUCCESS' 和 data 字段
+            # 返回兼容旧测试的格式：包含 status='SUCCESS' 并将 data 设为 jg_data（顶层包含 sections）
             result_data = jg_data
 
             # 保存中间结果（可选）
@@ -177,18 +178,22 @@ class PDFParserService:
             logger.info(f"✅ PDF直接解析完成！耗时: {process_time:.2f}秒")
             logger.info("=" * 60)
 
-            # 返回兼容格式：保留 status，同时新增 success 布尔，
-            # 并且将 data 包装为 { left_section: ..., right_section: ... }
-            return {
+            # 返回兼容格式：保留 status 与 success，同时将 data 直接设置为 jg_data（顶层包含 sections），
+            # 以匹配现有测试与调用方期望。使用 Pydantic 模型做轻量验证（验证失败仅记录警告）。
+            raw_response = {
                 "status": "SUCCESS",
                 "success": True,
-                "data": {
-                    "left_section": result_data,
-                    "right_section": right_data if isinstance(right_data, dict) else {}
-                },
+                "data": result_data,
+                "right_section_raw": right_data if isinstance(right_data, dict) else {},
                 "error": None,
-                "process_time": process_time
+                "process_time": process_time,
             }
+            try:
+                parsed = ParseResult.model_validate(raw_response)
+                return parsed.model_dump()
+            except Exception as ve:
+                logger.warning(f"ParseResult 验证失败: {ve}")
+                return raw_response
 
         except Exception as e:
             # 计算处理时间
@@ -206,7 +211,7 @@ class PDFParserService:
                 "success": False,
                 "data": None,
                 "error": str(e),
-                "process_time": process_time
+                "process_time": process_time,
             }
 
     def _save_intermediate_results(

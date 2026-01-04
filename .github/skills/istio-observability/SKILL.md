@@ -1,4 +1,9 @@
 
+---
+name: walmart-a-dev-assistant
+title: "Walmart-a 开发助手（Skill)"
+---
+
 # Walmart-a 开发助手（Skill）
 
 简述
