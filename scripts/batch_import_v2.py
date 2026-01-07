@@ -1,4 +1,4 @@
-zhi y#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Phase 4 批量导入所有 PDF - 改进版
@@ -14,7 +14,7 @@ Phase 4 批量导入所有 PDF - 改进版
 import sys
 import json
 import sqlite3
-from pathlib import Pathmei
+from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple
 
@@ -24,7 +24,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from backend.database.structured_importer import StructuredDataImporter
 from backend.app.services.pdf_parser_service import PDFParserService
 from backend.app.services.right_section_processor import RightSectionProcessor, merge_right_section_to_structured_data
-from backend.app.schemas.v2 import JGData, ImportResult
 
 
 class BatchImportLogger:
@@ -71,11 +70,9 @@ class BatchImportLogger:
 
 def find_test_pdfs():
     """查找测试 PDF 文件"""
-    # 尝试多个位置
+    # 尝试多个位置（恢复为仅匹配 20260106* 的版本）
     test_dirs = [
-        Path('backend/tests/test_data'),
-        Path('PdfData'),
-        Path('data/test_pdfs')
+        Path('20260106*')
     ]
     
     all_pdfs = []
@@ -99,14 +96,13 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
     
 
     try:
-        # Step 0: 检查是否已导入（使用导入器的 exists 方法，避免直接访问 conn）
-        try:
-            if importer.exists(pdf_name):
-                logger.log(f'{pdf_name} 已经导入，跳过。', 'WARN')
-                return True, 0
-        except Exception as e:
-            logger.log(f'检查已导入状态失败: {e}', 'WARN')
-            # 若检查失败，继续尝试解析并导入，以免漏掉未导入的文件
+        # Step 0: 检查是否已导入
+        db = importer.conn
+        cursor = db.execute("SELECT COUNT(*) FROM statements WHERE pdf_name=?", (pdf_name,))
+        exists = cursor.fetchone()[0]
+        if exists:
+            logger.log(f'{pdf_name} 已经导入，跳过。', 'WARN')
+            return True, 0
 
         # Step 1: 解析 PDF
         logger.log(f'[1/4] 正在解析 PDF: {pdf_name}', 'DEBUG')
@@ -123,18 +119,6 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
         logger.log(f'[2/4] 正在提取左侧结构化数据...', 'DEBUG')
         parsed_data = result.get('data', {})
 
-        # 尝试用 JGData 验证并标准化解析结果，若验证失败则保留原始 dict
-        jg_data_model = None
-        try:
-            jg_data_model = JGData.model_validate(parsed_data) if parsed_data else None
-            if jg_data_model is not None:
-                jg_data = jg_data_model.model_dump()
-            else:
-                jg_data = parsed_data or {}
-        except Exception as ve:
-            logger.log(f'JGData 验证失败，使用原始解析数据: {ve}', 'WARN')
-            jg_data = parsed_data or {}
-
         # 兼容两种 data 结构：
         # 1) { 'left_section': {...}, 'right_section': {...} }
         # 2) 直接返回 jg_structured_data（顶层包含 'sections'）
@@ -145,16 +129,10 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
 
         if not left_section:
             logger.log(f'解析结果中没有 left_section 数据，使用默认结构', 'WARN')
-            # ensure we have a sections structure
             jg_data = {"sections": {"header": [], "footer": []}, "metadata": {}}
         else:
             # left_section 已经包含或等同于 jg_structured_data 格式的数据
-            # if we validated to a model earlier, prefer that normalized structure
-            if isinstance(jg_data, dict) and 'sections' in jg_data:
-                # keep normalized jg_data
-                pass
-            else:
-                jg_data = left_section
+            jg_data = left_section
 
             if not isinstance(jg_data, dict) or 'sections' not in jg_data:
                 logger.log(f'结构化数据格式未包含 sections，使用默认结构', 'WARN')
@@ -174,22 +152,8 @@ def process_pdf(pdf_path: Path, importer: StructuredDataImporter, logger: BatchI
 
         # Step 4: 导入到数据库
         logger.log(f'[4/4] 正在导入到数据库...', 'DEBUG')
-        # Step 4: 导入到数据库 — 优先使用 import_from_model 以保持类型一致性
-        logger.log(f'[4/4] 正在导入到数据库...', 'DEBUG')
-        statement_id = None
-        try:
-            if jg_data_model is not None:
-                # 调用新的包装方法以直接传递模型
-                import_result: ImportResult = importer.import_from_model(pdf_name, jg_data_model)
-                if import_result and import_result.success:
-                    statement_id = import_result.statement_id
-                else:
-                    statement_id = None
-            else:
-                statement_id = importer.import_jg_data(pdf_name, jg_data)
-        except Exception as e:
-            logger.log(f'导入异常: {e}', 'ERROR')
-            statement_id = None
+        statement_id = importer.import_jg_data(pdf_name, jg_data)
+
         if statement_id is None:
             logger.log(f'导入失败', 'ERROR')
             return False, 0
