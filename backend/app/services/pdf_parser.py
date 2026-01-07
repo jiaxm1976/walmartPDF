@@ -261,53 +261,74 @@ class PDFParser:
         Returns:
             tuple: (起始日期, 结束日期)，解析失败返回(None, None)
         """
-        # 定义中文格式日期匹配的正则表达式
-        # 格式: 2024年10月8日 - 2024年11月10日
-        # 分组:
-        #   (\d{4}): 起始年份
-        #   (\d{1,2}): 起始月份（1-2位）
-        #   (\d{1,2}): 起始日期（1-2位）
-        #   \s*-\s*: 中间的连接符，允许空格
-        #   (\d{4}): 结束年份
-        #   (\d{1,2}): 结束月份
-        #   (\d{1,2}): 结束日期
-        pattern = r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*-\s*(\d{4})年(\d{1,2})月(\d{1,2})日'
-
-        # 在内容中搜索匹配
-        match = re.search(pattern, content)
-
-        # 如果找到匹配
-        if match:
-            # 提取起始日期的年月日
-            start_year, start_month, start_day = match.group(1, 2, 3)
-            # 提取结束日期的年月日
-            end_year, end_month, end_day = match.group(4, 5, 6)
-
+        # 优先匹配中文格式: 2024年10月8日 - 2024年11月10日
+        zh_pattern = r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*-\s*(\d{4})年(\d{1,2})月(\d{1,2})日'
+        m = re.search(zh_pattern, content)
+        if m:
             try:
-                # 转换为datetime对象
-                start_date = datetime(int(start_year), int(start_month), int(start_day))
-                end_date = datetime(int(end_year), int(end_month), int(end_day))
-
-                # 验证日期范围合理性
+                start_date = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                end_date = datetime(int(m.group(4)), int(m.group(5)), int(m.group(6)))
                 if start_date > end_date:
                     logger.error(f"对账周期起始日期({start_date})晚于结束日期({end_date})")
                     return None, None
-
-                # 记录解析结果
-                logger.info(f"解析对账周期: {start_date.date()} 至 {end_date.date()}")
-
-                # 返回日期元组
+                logger.info(f"解析对账周期(中文格式): {start_date.date()} 至 {end_date.date()}")
                 return start_date, end_date
-
             except ValueError as e:
-                # 日期转换失败
-                logger.error(f"日期转换失败: {e}")
+                logger.error(f"日期转换失败(中文格式): {e}")
                 return None, None
 
-        # 如果没有找到匹配
-        else:
-            logger.error("无法从PDF中提取对账周期")
-            return None, None
+        # 兼容 YYYY/MM/DD - YYYY/MM/DD
+        slash_pattern = r'(\d{4})/(\d{1,2})/(\d{1,2})\s*-\s*(\d{4})/(\d{1,2})/(\d{1,2})'
+        m = re.search(slash_pattern, content)
+        if m:
+            try:
+                start_date = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                end_date = datetime(int(m.group(4)), int(m.group(5)), int(m.group(6)))
+                if start_date > end_date:
+                    logger.error(f"对账周期起始日期({start_date})晚于结束日期({end_date})")
+                    return None, None
+                logger.info(f"解析对账周期(斜杠格式): {start_date.date()} 至 {end_date.date()}")
+                return start_date, end_date
+            except ValueError as e:
+                logger.error(f"日期转换失败(斜杠格式): {e}")
+                return None, None
+
+        # 兼容英文月名，比如: Sep 6, 2025 - Sep 20, 2025 或 September 6, 2025 - September 20, 2025
+        # 捕获两个英文日期片段
+        en_pattern = r'([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4})\s*-\s*([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4})'
+        m = re.search(en_pattern, content)
+        if m:
+            left = m.group(1).strip()
+            right = m.group(2).strip()
+            # 尝试多种英文月份解析格式
+            for fmt in ("%b %d, %Y", "%B %d, %Y"):
+                try:
+                    start_date = datetime.strptime(left, fmt)
+                    end_date = datetime.strptime(right, fmt)
+                    if start_date > end_date:
+                        logger.error(f"对账周期起始日期({start_date})晚于结束日期({end_date})")
+                        return None, None
+                    logger.info(f"解析对账周期(英文格式): {start_date.date()} 至 {end_date.date()}")
+                    return start_date, end_date
+                except ValueError:
+                    continue
+            # 若上述两种格式均失败，尝试去掉可能的时区信息（如 'PDT' 等）并再次解析
+            left_clean = re.sub(r'\s+\w{2,4}$', '', left)
+            right_clean = re.sub(r'\s+\w{2,4}$', '', right)
+            for fmt in ("%b %d, %Y", "%B %d, %Y"):
+                try:
+                    start_date = datetime.strptime(left_clean, fmt)
+                    end_date = datetime.strptime(right_clean, fmt)
+                    if start_date > end_date:
+                        logger.error(f"对账周期起始日期({start_date})晚于结束日期({end_date})")
+                        return None, None
+                    logger.info(f"解析对账周期(英文清理后): {start_date.date()} 至 {end_date.date()}")
+                    return start_date, end_date
+                except ValueError:
+                    continue
+
+        logger.error("无法从PDF中提取对账周期")
+        return None, None
 
 
     def parse_amount(self, text: str, keyword: str) -> float:
@@ -719,9 +740,9 @@ class PDFParser:
         Raises:
             PDFParseError: 当关键数据解析失败时
         """
-        logger.info(f"=" * 60)
+        logger.info("=" * 60)
         logger.info(f"开始解析PDF: {self.file_path.name}")
-        logger.info(f"=" * 60)
+        logger.info("=" * 60)
 
         try:
             # 1. 提取文本
@@ -781,9 +802,9 @@ class PDFParser:
             # 保存到实例属性
             self.parsed_data = result
 
-            logger.info(f"=" * 60)
+            logger.info("=" * 60)
             logger.info(f"PDF解析完成: {self.file_path.name}")
-            logger.info(f"=" * 60)
+            logger.info("=" * 60)
 
             return result
 

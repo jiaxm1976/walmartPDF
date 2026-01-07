@@ -763,10 +763,11 @@ def merge_text_blocks(
         # ===== 生成最终结果 =====
         result_text = '\n'.join(output_lines)
         logger.info(f"文本块合并处理完成，共 {len(output_lines)} 行")
-        text_infos=jg_structured_data(output_lines)
-        logger.info(f"结构化数据提取完成，共 {text_infos} 行")
-        
-        return result_text, text_infos
+        # 返回合并后的文本以及原始解析得到的 TextInfo 列表（all_text_infos），
+        # 以供上游按坐标计算行高度/位置使用。之前错误地将结构化 JSON 赋值给
+        # text_infos 导致调用方期望 TextInfo 对象时出错。
+        logger.info("结构化数据提取完成")
+        return result_text, all_text_infos
 
     # ===== 全局异常处理 =====
     except Exception as e:
@@ -883,15 +884,17 @@ def jg_structured_data(text_lines: List[str]) -> Dict[str, Any]:
 
             current_category = None
             current_details = []
+            import re
             for i, line in enumerate(text_lines, start=1):
-                # 首行或遇到新类别行（无逗号）
-                if "," not in line:
-                    # 首次遇到类别
+                # 首行或遇到新类别行（没有引号内容）
+                # 使用正则提取单引号内的块，避免金额中的千位分隔符逗号被错误拆分
+                parts = re.findall(r"'([^']*)'", line)
+                if not parts:
+                    # 视为类别行
                     if current_category is None:
                         current_category = line
                         current_details = []
                     else:
-                        # 切换类别，保存上一个类别
                         if current_details:
                             structured_data["classdata"]["category_details"].append({
                                 "类别名称": current_category,
@@ -899,15 +902,39 @@ def jg_structured_data(text_lines: List[str]) -> Dict[str, Any]:
                             })
                         current_category = line
                         current_details = []
-                else:
+                    continue
+
+                # 如果正则提取到两个块，通常为 [字段名, 金额]
+                if len(parts) >= 2:
+                    field_name = parts[0].strip()
+                    amount_str = parts[1].strip()
+                    # 清理金额字符串（去掉货币符号和千位分隔符）
                     try:
-                        field_name, amount_str = line.replace("'", "").split(",")
-                        amount = float(amount_str.strip())
+                        cleaned = amount_str.replace('$', '').replace('＄', '').replace('¥', '').replace('￥', '').replace(',', '').replace('美元', '').strip()
+                        # 处理可能的负号全角/半角
+                        cleaned = cleaned.replace('−', '-')
+                        amount = float(cleaned)
                         current_details.append({
-                            "字段名": field_name.strip(),
+                            "字段名": field_name,
                             "金额": amount
                         })
                     except Exception:
+                        # 无法解析金额则跳过该行，但保留原始字符串以便排查
+                        logger.debug(f"无法解析金额行: {line}")
+                        continue
+                else:
+                    # 如果提取到的块数量不是2，尝试从右侧找到金额字符串
+                    # 查找最后一个引号内块作为金额候选
+                    candidate = parts[-1].strip()
+                    try:
+                        cleaned = candidate.replace('$', '').replace('＄', '').replace('¥', '').replace('￥', '').replace(',', '').replace('美元', '').strip()
+                        cleaned = cleaned.replace('−', '-')
+                        amount = float(cleaned)
+                        field_name = parts[0].strip() if parts else ''
+                        if field_name:
+                            current_details.append({"字段名": field_name, "金额": amount})
+                    except Exception:
+                        logger.debug(f"跳过无法解析的不完整行: {line}")
                         continue
             # 处理最后一个类别
             if current_category and current_details:

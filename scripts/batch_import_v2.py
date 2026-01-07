@@ -1,4 +1,4 @@
-zhi y#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Phase 4 批量导入所有 PDF - 改进版
@@ -12,9 +12,10 @@ Phase 4 批量导入所有 PDF - 改进版
 """
 
 import sys
+import os
 import json
 import sqlite3
-from pathlib import Pathmei
+from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple
 
@@ -71,12 +72,14 @@ class BatchImportLogger:
 
 def find_test_pdfs():
     """查找测试 PDF 文件"""
-    # 尝试多个位置
-    test_dirs = [
-        Path('backend/tests/test_data'),
-        Path('PdfData'),
-        Path('data/test_pdfs')
-    ]
+    # 如果设置了 ONLY_USE_TEST_DIR 环境变量，则只使用 data/test_pdfs
+    if os.environ.get('ONLY_USE_TEST_DIR'):
+        test_dirs = [Path('data/test_pdfs')]
+    else:
+        # 尝试多个位置
+        test_dirs = [
+            Path('20260101账单')
+        ]
     
     all_pdfs = []
     for test_dir in test_dirs:

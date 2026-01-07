@@ -5,11 +5,11 @@
 
 功能：
   1. 直接将 jg_structured_data() 的输出导入到数据库
-  2. 自动识别并合并低频字段（频率 < 2）到 {section_name}_其他
-  3. 支持独立导入和批量导入
+  2. 支持独立导入和批量导入
+  3. 导入所有字段（不进行低频字段合并）
 
 使用方式（集成到 PDF 解析流程中）：
-  from scripts.db_structured_import import StructuredDataImporter
+  from backend.database.structured_importer import StructuredDataImporter
   
   importer = StructuredDataImporter('backend/data/walmart_pdf_parser.db')
   importer.import_jg_data(pdf_name, jg_structured_data)
@@ -19,8 +19,11 @@
 """
 
 import json
+import os
+import re
 import sqlite3
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from backend.app.schemas.v2 import JGData
@@ -144,34 +147,7 @@ class StructuredDataImporter:
             logger.warning(f"获取统计信息失败: {e}")
             return {}
     
-    def _load_frequency_map(self) -> Dict[str, set]:
-        """
-        加载字段频率映射，用于识别低频字段
-        返回: {section_name: {high_freq_fields}}
-        """
-        if self._frequency_cache:
-            return self._frequency_cache
-        
-        try:
-            cursor = self.conn.execute(
-                "SELECT section_name, field_name, frequency FROM field_frequency WHERE frequency >= 2"
-            )
-            
-            freq_map = {}
-            for row in cursor:
-                section = row['section_name']
-                field = row['field_name']
-                if section not in freq_map:
-                    freq_map[section] = set()
-                freq_map[section].add(field)
-            
-            self._frequency_cache = freq_map
-            return freq_map
-        
-        except Exception as e:
-            logger.warning(f"⚠ 无法加载频率映射: {e}，将使用默认逻辑")
-            return {}
-
+    
     def get_field_frequency(self) -> Dict[str, int]:
         """
         返回全库的字段频率映射：{ field_name: frequency }
@@ -197,47 +173,80 @@ class StructuredDataImporter:
         if isinstance(value, Decimal):
             return float(value)
         return str(value)
-    
-    def _merge_low_frequency_fields(
-        self,
-        section_name: str,
-        fields_dict: Dict[str, Any],
-        freq_map: Dict[str, set]
-    ) -> Dict[str, Any]:
+
+    def _normalize_period(self, raw: Any) -> Optional[str]:
         """
-        识别并合并低频字段到 {section_name}_其他
-        
-        Args:
-            section_name: 板块名称
-            fields_dict: 该板块的字段字典
-            freq_map: 频率映射表
-        
-        Returns:
-            合并后的字段字典
+        将各种可能的 '统计区间' 原始字符串规范化为
+        'YYYY-MM-DD - YYYY-MM-DD' 格式。如果无法解析则返回原始字符串或 None。
         """
-        if section_name not in freq_map:
-            # 如果频率表中没有该板块信息，保守起见，所有字段都保留
-            return fields_dict
-        
-        high_freq_fields = freq_map[section_name]
-        other_fields = {}
-        merged_dict = {}
-        
-        for field_name, field_value in fields_dict.items():
-            if field_name in high_freq_fields:
-                # 高频字段，直接保留
-                merged_dict[field_name] = self._convert_value(field_value)
-            else:
-                # 低频字段，收集到 other_fields
-                other_fields[field_name] = self._convert_value(field_value)
-        
-        # 如果有低频字段，添加到 {section_name}_其他
-        if other_fields:
-            other_key = f'{section_name}_其他'
-            merged_dict[other_key] = other_fields
-            logger.debug(f"  合并 {section_name} 的 {len(other_fields)} 个低频字段")
-        
-        return merged_dict
+        if raw is None:
+            return None
+        if not isinstance(raw, str):
+            try:
+                raw = str(raw)
+            except Exception:
+                return None
+
+        raw = raw.strip()
+
+        # 如果已经是 ISO 格式，直接返回
+        iso_pattern = r'(\d{4})-(\d{2})-(\d{2})\s*-\s*(\d{4})-(\d{2})-(\d{2})'
+        m = re.search(iso_pattern, raw)
+        if m:
+            start_date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+            end_date = f"{m.group(4)}-{m.group(5)}-{m.group(6)}"
+            return f"{start_date} - {end_date}"
+
+        # 中文格式: 2024年10月8日 - 2024年11月10日
+        zh_pattern = r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*-\s*(\d{4})年(\d{1,2})月(\d{1,2})日'
+        m = re.search(zh_pattern, raw)
+        if m:
+            try:
+                start = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                end = datetime(int(m.group(4)), int(m.group(5)), int(m.group(6)))
+                return f"{start.strftime('%Y-%m-%d')} - {end.strftime('%Y-%m-%d')}"
+            except Exception:
+                return raw
+
+        # 斜杠格式: 2024/10/08 - 2024/11/10
+        slash_pattern = r'(\d{4})/(\d{1,2})/(\d{1,2})\s*-\s*(\d{4})/(\d{1,2})/(\d{1,2})'
+        m = re.search(slash_pattern, raw)
+        if m:
+            try:
+                start = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                end = datetime(int(m.group(4)), int(m.group(5)), int(m.group(6)))
+                return f"{start.strftime('%Y-%m-%d')} - {end.strftime('%Y-%m-%d')}"
+            except Exception:
+                return raw
+
+        # 英文月份: Sep 6, 2025 - Sep 20, 2025 或 September 6, 2025 - September 20, 2025
+        # 先清理常见的时区后缀（如 UTC, GMT, EST 等）
+        raw_no_tz = re.sub(r'\s+(?:UTC|GMT|EST|CST|PST|JST|IST|CET|BST|EDT|CDT|PDT|IDT|AEST|AEDT)\b', '', raw, flags=re.IGNORECASE)
+        en_pattern = r'([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4})\s*-\s*([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4})'
+        m = re.search(en_pattern, raw_no_tz)
+        if m:
+            left = m.group(1).strip()
+            right = m.group(2).strip()
+            for fmt in ("%b %d, %Y", "%B %d, %Y"):
+                try:
+                    s = datetime.strptime(left, fmt)
+                    e = datetime.strptime(right, fmt)
+                    return f"{s.strftime('%Y-%m-%d')} - {e.strftime('%Y-%m-%d')}"
+                except Exception:
+                    continue
+            # 清理可能的时区后缀再试
+            left_clean = re.sub(r'\s+\w{2,4}$', '', left)
+            right_clean = re.sub(r'\s+\w{2,4}$', '', right)
+            for fmt in ("%b %d, %Y", "%B %d, %Y"):
+                try:
+                    s = datetime.strptime(left_clean, fmt)
+                    e = datetime.strptime(right_clean, fmt)
+                    return f"{s.strftime('%Y-%m-%d')} - {e.strftime('%Y-%m-%d')}"
+                except Exception:
+                    continue
+
+        # 无法识别，返回原始字符串以便人工排查
+        return raw
     
     def import_jg_data(
         self,
@@ -288,9 +297,6 @@ class StructuredDataImporter:
             if not sections:
                 logger.warning(f"⚠ {pdf_name}: 没有板块数据")
                 return None
-            
-            # 加载频率映射
-            freq_map = self._load_frequency_map()
             
             # Step 1: 提取 header 板块数据（兼容多种 item 格式）
             header_fields = sections.get('header', [])
@@ -352,15 +358,9 @@ class StructuredDataImporter:
                         section_errors.append(section_name)
                         continue
                     
-                    # 右侧数据特殊处理：不进行低频字段合并（保留所有字段）
-                    if section_name == 'right_section':
-                        merged_dict = section_dict
-                        logger.debug(f"  右侧数据板块'{section_name}': 不进行字段合并，保留全部字段")
-                    else:
-                        # 其他板块进行低频字段合并
-                        merged_dict = self._merge_low_frequency_fields(
-                            section_name, section_dict, freq_map
-                        )
+                    # 所有板块直接导入所有字段，不进行低频字段合并
+                    merged_dict = {k: self._convert_value(v) for k, v in section_dict.items()}
+                    logger.debug(f"  板块'{section_name}': 导入 {len(merged_dict)} 个字段（不进行字段合并）")
                     
                     # 写入 section_data 表
                     success = self._insert_section_data(
@@ -448,15 +448,25 @@ class StructuredDataImporter:
                 pending_payment
             ) VALUES (?, ?, ?, ?, ?, ?)
             """
-            
+
+            # 规范化统计区间（统一为 YYYY-MM-DD - YYYY-MM-DD），便于后续查询与比对
+            normalized_period = self._normalize_period(header_dict.get('统计区间'))
+
             params = (
                 pdf_name,
-                header_dict.get('统计区间'),
+                normalized_period,
                 safe_float('向您支付的金额'),
                 safe_float('期初余额'),
                 safe_float('备用金'),
                 safe_float('回款等待')
             )
+
+            # 调试：打印 header_dict 与即将插入的参数，便于追踪金额来源
+            try:
+                logger.info(f"_insert_statement header_dict: {header_dict}")
+                logger.info(f"_insert_statement params: {params}")
+            except Exception:
+                pass
 
             # 首选使用 self.conn.execute
             try:

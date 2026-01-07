@@ -9,6 +9,8 @@
 # ============================================================
 
 import logging
+import re
+from datetime import datetime
 import numpy as np
 from typing import List, Tuple, Dict, Any, Optional
 
@@ -369,44 +371,73 @@ class LeftImageProcessorService:
                             structured_data["metadata"]["section_order"].append(current_section)
                     continue  # 板块标题行本身不作为明细存储
                 
+                # ---- 判断 2.5：先检查是否为日期行（比金额检查优先） ----
+                # 日期行应该在前几行（header 开头）优先识别
+                if line_no <= 3 or (current_section == "header" and line_no <= 5):
+                    date_parsed = self._recognize_date_range(line)
+                    if date_parsed is not None:
+                        # 识别到日期行
+                        start_iso, end_iso = date_parsed
+                        detail_item = {
+                            "field": "统计区间",
+                            "value": f"{start_iso} - {end_iso}",  # 使用规范化后的日期
+                            "raw": line,
+                            "line_no": line_no,
+                            "period_start": start_iso,
+                            "period_end": end_iso
+                        }
+                        structured_data["sections"][current_section].append(detail_item)
+                        logger.debug(f"[行 {line_no}] [{current_section}] 日期行：{line} → {start_iso} - {end_iso}")
+                        continue  # 处理完日期行，跳过后续判断
+                
                 # ---- 判断 3：是否为明细行（包含金额） ----
                 if self._has_amount(line):
                     # 解析明细行：字段名 + 金额
                     try:
-                        parts = line.replace("'", "").split(",")
-                        if len(parts) >= 2:
+                        # 优先使用正则提取单引号内的块，避免金额中的千位逗号被错误拆分
+                        import re
+                        parts = re.findall(r"'([^']*)'", line)
+                        if parts and len(parts) >= 2:
                             field_name = parts[0].strip()
                             amount_str = parts[-1].strip()
-                            
-                            # 尝试解析为浮点数
-                            try:
-                                amount = float(amount_str.replace("美元", "").replace("$", "").strip())
-                            except ValueError:
-                                # 如果解析失败，保留原始字符串
-                                amount = amount_str
-                            
-                            detail_item = {
-                                "field": field_name,
-                                "value": amount,
-                                "raw": line,
-                                "line_no": line_no
-                            }
-                            structured_data["sections"][current_section].append(detail_item)
-                            logger.debug(f"[行 {line_no}] [{current_section}] {field_name} = {amount}")
+                        else:
+                            # 回退：移除引号后按逗号分割（兼容旧格式）
+                            parts2 = line.replace("'", "").split(",")
+                            field_name = parts2[0].strip() if parts2 else ''
+                            amount_str = parts2[-1].strip() if len(parts2) >= 2 else ''
+
+                        # 清理金额字符串，去掉货币符号、千位分隔符与中文单位
+                        cleaned = amount_str.replace('$', '').replace('＄', '').replace('¥', '').replace('￥', '')
+                        cleaned = cleaned.replace('美元', '').replace(',', '').replace('−', '-').strip()
+
+                        try:
+                            amount = float(cleaned)
+                        except Exception:
+                            amount = amount_str
+
+                        detail_item = {
+                            "field": field_name,
+                            "value": amount,
+                            "raw": line,
+                            "line_no": line_no
+                        }
+                        structured_data["sections"][current_section].append(detail_item)
+                        logger.debug(f"[行 {line_no}] [{current_section}] {field_name} = {amount}")
                     except Exception as e:
                         logger.warning(f"[行 {line_no}] 解析明细行失败: {line}，错误: {e}")
                 else:
-                    # ---- 判断 4：非金额行但可能是描述（如日期区间） ----
+                    # ---- 判断 4：非金额行但可能是其他描述 ----
+                    # 注意：日期行已在前面优先处理，这里是其他非金额、非日期的描述行
                     if line_no == 1 or (current_section == "header" and line_no <= 3):
-                        # 日期行或 header 中的非金额行
+                        # header 中的其他描述行
                         detail_item = {
-                            "field": "统计区间",
+                            "field": "描述",
                             "value": line,
                             "raw": line,
                             "line_no": line_no
                         }
                         structured_data["sections"][current_section].append(detail_item)
-                        logger.debug(f"[行 {line_no}] [{current_section}] 描述行：{line}")
+                        logger.debug(f"[行 {line_no}] [{current_section}] 其他描述行：{line}")
             
             # ---- 更新元数据 ----
             structured_data["metadata"]["section_count"] = len(structured_data["sections"])
@@ -432,6 +463,99 @@ class LeftImageProcessorService:
                     "error": str(e)
                 }
             }
+
+    def _recognize_date_range(self, text: str) -> Optional[Tuple[str, str]]:
+        """
+        识别文本中的对账周期（起始日期和结束日期），不修改原文。
+
+        支持格式（示例）：
+        - 2024年10月8日 - 2024年11月10日
+        - 2024/10/08 - 2024/11/10
+        - Sep 6, 2025 - Sep 20, 2025
+        - September 6, 2025 - September 20, 2025
+        - SEP6,2025-SEP20,2025 (OCR compact format)
+        - Sep6,2025-Sep20,2025 (OCR compact format)
+
+        返回 (start_iso, end_iso) 或 None。
+        """
+        if not text or not isinstance(text, str):
+            return None
+
+        s = text.strip()
+
+        # 中文格式
+        zh = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日\s*-\s*(\d{4})年(\d{1,2})月(\d{1,2})日", s)
+        if zh:
+            try:
+                start = datetime(int(zh.group(1)), int(zh.group(2)), int(zh.group(3)))
+                end = datetime(int(zh.group(4)), int(zh.group(5)), int(zh.group(6)))
+                return start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')
+            except Exception:
+                return None
+
+        # 斜杠格式
+        slash = re.search(r"(\d{4})/(\d{1,2})/(\d{1,2})\s*-\s*(\d{4})/(\d{1,2})/(\d{1,2})", s)
+        if slash:
+            try:
+                start = datetime(int(slash.group(1)), int(slash.group(2)), int(slash.group(3)))
+                end = datetime(int(slash.group(4)), int(slash.group(5)), int(slash.group(6)))
+                return start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')
+            except Exception:
+                return None
+
+        # OCR compact format (e.g., SEP6,2025-SEP20,2025 or Sep6,2025-Sep20,2025)
+        # 这种格式来自 OCR 输出，月份和日期之间没有空格，日期和年份之间用逗号分隔
+        ocr_compact = re.search(
+            r'([A-Za-z]{3,9})(\d{1,2}),(\d{4})\s*-\s*([A-Za-z]{3,9})(\d{1,2}),(\d{4})', 
+            s
+        )
+        if ocr_compact:
+            try:
+                month_start = ocr_compact.group(1)
+                day_start = int(ocr_compact.group(2))
+                year_start = int(ocr_compact.group(3))
+                month_end = ocr_compact.group(4)
+                day_end = int(ocr_compact.group(5))
+                year_end = int(ocr_compact.group(6))
+                
+                # 构造标准格式字符串，然后解析
+                left = f"{month_start} {day_start}, {year_start}"
+                right = f"{month_end} {day_end}, {year_end}"
+                
+                for fmt in ("%b %d, %Y", "%B %d, %Y"):
+                    try:
+                        start = datetime.strptime(left, fmt)
+                        end = datetime.strptime(right, fmt)
+                        return start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        # 英文月份（保留原始中间逗号/空格，不做替换）
+        en = re.search(r'([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4})\s*-\s*([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4})', s)
+        if en:
+            left = en.group(1).strip()
+            right = en.group(2).strip()
+            for fmt in ("%b %d, %Y", "%B %d, %Y"):
+                try:
+                    start = datetime.strptime(left, fmt)
+                    end = datetime.strptime(right, fmt)
+                    return start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')
+                except Exception:
+                    continue
+            # 尝试去掉尾部可能的时区词（PDT等）再解析
+            left_clean = re.sub(r"\s+\w{2,4}$", "", left)
+            right_clean = re.sub(r"\s+\w{2,4}$", "", right)
+            for fmt in ("%b %d, %Y", "%B %d, %Y"):
+                try:
+                    start = datetime.strptime(left_clean, fmt)
+                    end = datetime.strptime(right_clean, fmt)
+                    return start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')
+                except Exception:
+                    continue
+
+        return None
     
     def extract_structured_data(self, text_lines: List[Dict[str, Any]]) -> Dict[str, Any]:
         """从文本行中提取结构化数据（已弃用，使用 jg_structured_data）.
@@ -480,7 +604,7 @@ class LeftImageProcessorService:
             # Step 2: 提取文本块
             logger.info("Step 2: 提取文本块（OCR）")
             ocr_results = self.extract_text_blocks(processed_image)
-            logger.info(f"  ✓ 成功提取 {len(ocr_results)} 个文本块")
+            logger.info(f"  ✓ 成功提取 {ocr_results} 个文本块")
             
             # Step 3: 格式化文本块
             logger.info("Step 3: 格式化文本块")

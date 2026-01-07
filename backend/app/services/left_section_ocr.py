@@ -74,10 +74,12 @@ class LeftSectionOCR:
             lines = merged_text.split('\n')
             for line in lines:
                 if line.strip():
-                    # 解析每行的文本块，格式为：'文本1','文本2','文本3'
-                    text_blocks = line.split(',')
-                    # 移除单引号并合并为一个字符串
-                    merged_line_text = ' '.join([tb.strip().strip("'") for tb in text_blocks])
+                    # 使用正则提取单引号内的文本块，避免把金额中的千位分隔符（逗号）错误拆分
+                    # 之前的实现使用 line.split(',') 会将 "'$1,868.55'" 拆成 ["'$1", "868.55'"],
+                    # 导致金额解析丢失高位数字。改为提取引号内内容保持金额完整性。
+                    text_blocks = re.findall(r"'([^']*)'", line)
+                    # 合并为一个字符串（用空格分隔原始块顺序）
+                    merged_line_text = ' '.join(tb.strip() for tb in text_blocks)
                     # 计算该行的Y坐标（取所有文本块的中心Y坐标平均值）
                     line_y = sum(info.center_y for info in text_infos) / len(text_infos) if text_infos else 0.0
                     text_lines.append((merged_line_text, line_y))

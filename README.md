@@ -20,14 +20,14 @@ source .venv/bin/activate
 # 安装依赖
 pip install -r backend/requirements.txt
 
-# 初始化数据库
-python -c "from backend.database.config import init_database; init_database()"
+# 初始化数据库（标准方式）
+python scripts/init_database_v2.py
 
 # 启动 API 服务（开发模式）
 uvicorn backend.main:app --reload --port 8000
 
 # 访问 API 文档
-# http://localhost:8000/api/v2/docs
+# http://localhost:8000/api/docs
 ```
 
 ### 2. 前端开发环境配置
@@ -44,6 +44,31 @@ npm start
 # 访问前端应用
 # http://localhost:3000
 ```
+
+---
+
+## ⚠️ 数据库初始化说明（重要）
+
+**自 2026-01-06 起，统一使用 `init_database_v2.py` 进行数据库初始化**
+
+### 标准初始化方式
+
+```bash
+python scripts/init_database_v2.py
+```
+
+### 功能说明
+- ✅ 自动备份现有数据库
+- ✅ 清空旧数据库
+- ✅ 执行 SQL schema 初始化
+- ✅ 初始化右侧数据字段频率
+- ✅ 验证表结构完整性
+
+### 废除的初始化方式
+以下初始化方式已废除，请勿使用：
+- ❌ `python -c "from backend.database.config import init_database; init_database()"`
+- ❌ `scripts/init_database.py`（已删除）
+- ❌ `scripts/init_right_section.py`（已删除）
 
 ---
 
@@ -380,6 +405,48 @@ POST /api/v2/statements/export
 
 ---
 
+## 🎯 数据导出功能（新增）
+
+### 快速导出数据
+
+```bash
+# 按开始日期导出数据到 Excel
+python scripts/export_data_to_excel.py 2025-09-06
+
+# 输出文件：output/数据导出_20250906.xlsx
+```
+
+### 导出特点
+
+✅ **两层表头**：第一行 section 名称，第二行字段名  
+✅ **中文字段名**：所有列名都是中文  
+✅ **空值填充**：缺失数据自动填充为空  
+✅ **格式规范**：表头冻结、列宽自动调整  
+✅ **支持 API**：也可通过 HTTP 接口导出  
+
+### 使用示例
+
+```bash
+# 导出 2025-09-06 及之后的数据
+python scripts/export_data_to_excel.py 2025-09-06
+
+# 导出到自定义路径
+python scripts/export_data_to_excel.py 2025-09-06 ~/Downloads/data.xlsx
+
+# 通过 API 导出（需启动服务器）
+curl -X POST "http://localhost:8000/api/export/data-to-excel?start_date=2025-09-06" \
+  -o data.xlsx
+```
+
+### 导出文档
+
+📖 **详细说明**：[README_导出工具.md](README_导出工具.md)  
+📖 **完整指南**：[EXPORT_COMPLETE_GUIDE.md](EXPORT_COMPLETE_GUIDE.md)  
+📖 **快速参考**：[EXPORT_QUICK_REFERENCE.md](EXPORT_QUICK_REFERENCE.md)  
+📖 **实现总结**：[EXPORT_IMPLEMENTATION_SUMMARY.md](EXPORT_IMPLEMENTATION_SUMMARY.md)
+
+---
+
 ## 📄 许可证
 
 MIT License - 详见 LICENSE 文件
@@ -387,6 +454,11 @@ MIT License - 详见 LICENSE 文件
 ---
 
 ## 更新日志
+
+### 2026-01-06
+- ✅ 数据导出功能完成（命令行 + HTTP API）
+- ✅ Excel 生成支持两层表头、中文字段名、空值填充
+- ✅ 完整导出文档和快速参考
 
 ### 2026-01-02
 - ✅ API v2 设计规范完成（13 端点，RBAC）
@@ -401,5 +473,5 @@ MIT License - 详见 LICENSE 文件
 
 ---
 
-**最后更新**：2026-01-02  
+**最后更新**：2026-01-06  
 **维护者**：Walmart PDF 解析团队

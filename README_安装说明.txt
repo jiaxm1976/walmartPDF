@@ -58,13 +58,26 @@ source .venv/bin/activate  # macOS / Linux
 pip install -r backend/requirements.txt
 ```
 将虚拟环境加入项目开发规范有助于减少环境相关的测试失败（例如缺少本地 OCR 绑定或模块导入错误）。
-### 3. 测试环境
+
+### 3. 初始化数据库（标准方式）
+```bash
+python scripts/init_database_v2.py
+```
+**重要：** 自 2026-01-06 起，必须使用此方式初始化数据库。
+功能包括：
+- 自动备份现有数据库
+- 清空旧数据库
+- 执行 SQL schema 初始化
+- 初始化右侧数据字段频率
+- 验证表结构完整性
+
+### 4. 测试环境
 ```bash
 # 运行测试脚本
 python scripts/visualize_with_calibration.py PdfData/MP_01142025_statement_summary.pdf
 ```
 
-### 4. 验证OCR引擎
+### 5. 验证OCR引擎
 首次运行会自动下载PaddleOCR模型（约1-2GB），请耐心等待。
 
 ## 项目状态说明

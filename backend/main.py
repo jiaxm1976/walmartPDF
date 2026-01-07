@@ -11,10 +11,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-try:
-    from backend.database.config import init_database
-except Exception:
-    from database.config import init_database
+# 注意：自 2026-01-06 起，不再使用 backend.database.config.init_database()
+# 请使用标准脚本初始化数据库：python scripts/init_database_v2.py
+
 try:
     # 优先尝试以包名方式导入（通过 `import backend.main` 时生效）
     from backend.app.api.v2 import api_router as api_v2_router
@@ -24,6 +23,15 @@ except Exception:
         from app.api.v2 import api_router as api_v2_router
     except Exception:
         api_v2_router = None
+
+# 导入导出路由
+try:
+    from backend.app.routes.export_router import router as export_router
+except Exception:
+    try:
+        from app.routes.export_router import router as export_router
+    except Exception:
+        export_router = None
 
 # 配置日志
 logging.basicConfig(
@@ -58,14 +66,12 @@ async def startup_event():
     logger.info("=" * 60)
     logger.info("启动Walmart PDF解析系统API服务")
     logger.info("=" * 60)
-
-    # 初始化数据库
-    try:
-        init_database()
-        logger.info("✓ 数据库连接成功")
-    except Exception as e:
-        logger.error(f"❌ 数据库初始化失败: {e}")
-        raise
+    
+    # 注意：数据库初始化不再在此进行
+    # 请提前运行：python scripts/init_database_v2.py
+    logger.info("✓ 应用启动成功")
+    logger.info("📚 API文档: http://localhost:8000/api/docs")
+    logger.info("⚠️  初次使用请运行：python scripts/init_database_v2.py")
 
 
 @app.on_event("shutdown")
@@ -98,6 +104,10 @@ async def health_check():
 if api_v2_router is not None:
     # 挂载 /api/v2 路由（若 v2 已就位）
     app.include_router(api_v2_router, prefix="/api/v2")
+
+# 注册导出路由
+if export_router is not None:
+    app.include_router(export_router)
 
 
 if __name__ == "__main__":
